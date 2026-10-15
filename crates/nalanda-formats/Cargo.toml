@@ -1,0 +1,19 @@
+[package]
+name = "nalanda-formats"
+description = "Read metadata, covers and text content from ebook files; write simple EPUBs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nalanda-core.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+chrono.workspace = true
+roxmltree.workspace = true
+scraper.workspace = true
+ego-tree = "0.6"
+lopdf = "0.34"
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+default-members = [
+    "crates/nalanda-core",
+    "crates/nalanda-formats",
+    "crates/nalanda-library",
+    "crates/nalanda-convert",
+    "crates/nalanda-device",
+    "crates/nalanda-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+nalanda-core = { path = "crates/nalanda-core" }
+nalanda-formats = { path = "crates/nalanda-formats" }
+nalanda-library = { path = "crates/nalanda-library" }
+nalanda-convert = { path = "crates/nalanda-convert" }
+nalanda-device = { path = "crates/nalanda-device" }
+nalanda-server = { path = "crates/nalanda-server" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+roxmltree = "0.20"
+scraper = "0.20"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "fs", "signal"] }
+axum = { version = "0.8", features = ["multipart"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
+gpui-kit = "0.7.3"

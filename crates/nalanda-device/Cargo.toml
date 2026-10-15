@@ -1,0 +1,14 @@
+[package]
+name = "nalanda-device"
+description = "Detect and manage USB-connected e-readers (Kobo)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nalanda-core.workspace = true
+thiserror.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

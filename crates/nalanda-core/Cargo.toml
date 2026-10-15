@@ -1,0 +1,10 @@
+[package]
+name = "nalanda-core"
+description = "Domain model and API types shared by the Nalanda server, desktop app and future mobile clients"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+chrono.workspace = true
