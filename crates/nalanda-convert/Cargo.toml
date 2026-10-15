@@ -1,0 +1,15 @@
+[package]
+name = "nalanda-convert"
+description = "Ebook format conversion: native converters plus calibre's ebook-convert as a backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nalanda-core.workspace = true
+nalanda-formats.workspace = true
+nalanda-library.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

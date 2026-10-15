@@ -1,0 +1,18 @@
+[package]
+name = "nalanda-library"
+description = "On-disk ebook library: SQLite catalog plus a calibre-style folder layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nalanda-core.workspace = true
+nalanda-formats.workspace = true
+thiserror.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
