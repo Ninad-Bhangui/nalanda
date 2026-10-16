@@ -8,8 +8,8 @@
 //! ```
 //!
 //! The layout mirrors calibre's, so the files stay usable without Nalanda.
-//! A calibre library (one with calibre's `metadata.db`) also opens directly,
-//! read-only for now; see [`calibre`].
+//! A calibre library (one with calibre's `metadata.db`) opens directly and is
+//! edited in place; see [`calibre`].
 //! [`Library`] is `Sync` and is shared by the desktop app and the server.
 
 mod calibre;
@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
 use nalanda_core::{Book, BookFormat, BookId, FormatFile, Metadata};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -33,8 +33,8 @@ pub enum Error {
     NotFound(BookId),
     #[error("book {0} has no {1} file")]
     MissingFormat(BookId, BookFormat),
-    #[error("calibre libraries are read-only in this version of Nalanda")]
-    ReadOnly,
+    #[error("cover image: {0}")]
+    Cover(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -91,19 +91,25 @@ pub struct Library {
     root: PathBuf,
     conn: Mutex<Connection>,
     catalog: Catalog,
+    /// Where to back up a calibre catalog before the first write, if anywhere.
+    backup_dir: Option<PathBuf>,
 }
 
 impl Library {
     /// Opens the library at `root`, creating it if needed. A calibre library
     /// is opened in place.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
-        let root = root.into();
+        Self::open_with_backup_dir(root.into(), calibre::default_backup_dir())
+    }
+
+    fn open_with_backup_dir(root: PathBuf, backup_dir: Option<PathBuf>) -> Result<Self> {
         let calibre_db = root.join(calibre::DB_FILE);
         if calibre_db.is_file() {
             return Ok(Self {
-                conn: Mutex::new(calibre::open_read_only(&calibre_db)?),
+                conn: Mutex::new(calibre::open(&calibre_db)?),
                 root,
                 catalog: Catalog::Calibre,
+                backup_dir,
             });
         }
         std::fs::create_dir_all(&root)?;
@@ -114,6 +120,7 @@ impl Library {
             root,
             conn: Mutex::new(conn),
             catalog: Catalog::Nalanda,
+            backup_dir: None,
         })
     }
 
@@ -122,11 +129,64 @@ impl Library {
         root.join(DB_FILE).is_file() || root.join(calibre::DB_FILE).is_file()
     }
 
-    fn check_writable(&self) -> Result<()> {
-        match self.catalog {
-            Catalog::Nalanda => Ok(()),
-            Catalog::Calibre => Err(Error::ReadOnly),
+    /// Runs `f` in a transaction on a calibre catalog, after making sure the
+    /// catalog has been backed up once.
+    fn calibre_write<T>(&self, f: impl FnOnce(&Transaction<'_>) -> Result<T>) -> Result<T> {
+        let mut conn = self.conn();
+        if let Some(dir) = &self.backup_dir {
+            calibre::backup_once(&conn, &self.root, dir)?;
         }
+        let tx = conn.transaction()?;
+        let out = f(&tx)?;
+        tx.commit()?;
+        Ok(out)
+    }
+
+    fn add_calibre_book(&self, source: &Path) -> Result<Book> {
+        let info = nalanda_formats::read_book_info(source)?;
+        let (id, dir) = self.calibre_write(|tx| calibre::insert_book(tx, &info.metadata))?;
+        let result = (|| {
+            std::fs::create_dir_all(self.root.join(&dir))?;
+            // An undecodable embedded cover shouldn't stop the import.
+            if let Some(cover) = &info.cover
+                && let Ok(jpeg) = calibre::cover_jpeg(&cover.data)
+            {
+                self.write_calibre_cover(id, &jpeg)?;
+            }
+            self.add_format(id, source, info.format)
+        })();
+        if let Err(e) = result {
+            let _ = self.remove_book(id);
+            return Err(e);
+        }
+        self.get(id)
+    }
+
+    fn add_calibre_format(&self, id: BookId, source: &Path, format: BookFormat) -> Result<()> {
+        let book = self.get(id)?;
+        let dir = self.book_path(id)?;
+        std::fs::create_dir_all(&dir)?;
+        let (file, name) = calibre::format_file_name(&book.metadata, format);
+        let dest = dir.join(&file);
+        if source != dest {
+            std::fs::copy(source, &dest)?;
+        }
+        let size = std::fs::metadata(&dest)?.len();
+        let previous =
+            self.calibre_write(|tx| calibre::record_format(tx, id, format, &name, size))?;
+        if let Some(previous) = previous {
+            let _ = std::fs::remove_file(dir.join(previous));
+        }
+        Ok(())
+    }
+
+    fn write_calibre_cover(&self, id: BookId, jpeg: &[u8]) -> Result<()> {
+        let dir = self.book_path(id)?;
+        std::fs::write(dir.join("cover.jpg"), jpeg)?;
+        self.calibre_write(|tx| {
+            tx.execute("UPDATE books SET has_cover = 1 WHERE id = ?1", [id])?;
+            calibre::touch(tx, id)
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -140,7 +200,9 @@ impl Library {
     /// Imports an ebook file: reads its metadata and cover and copies it into
     /// the library. The source file is left untouched.
     pub fn add_book(&self, source: &Path) -> Result<Book> {
-        self.check_writable()?;
+        if self.catalog == Catalog::Calibre {
+            return self.add_calibre_book(source);
+        }
         let info = nalanda_formats::read_book_info(source)?;
         let now = Utc::now();
         let id = {
@@ -198,7 +260,9 @@ impl Library {
     /// Copies `source` into the book's directory as its `format` file,
     /// replacing any existing file of that format.
     pub fn add_format(&self, id: BookId, source: &Path, format: BookFormat) -> Result<()> {
-        self.check_writable()?;
+        if self.catalog == Catalog::Calibre {
+            return self.add_calibre_format(id, source, format);
+        }
         let book = self.get(id)?;
         let dir = self.book_path(id)?;
         let file_name = format!(
@@ -286,7 +350,10 @@ impl Library {
 
     /// Replaces a book's metadata. Files keep their names; only the catalog changes.
     pub fn update_metadata(&self, id: BookId, m: &Metadata) -> Result<Book> {
-        self.check_writable()?;
+        if self.catalog == Catalog::Calibre {
+            self.calibre_write(|tx| calibre::write_metadata(tx, id, m))?;
+            return self.get(id);
+        }
         let changed = self.conn().execute(
             "UPDATE books SET title = ?1, sort_title = ?2, authors = ?3, author_sort = ?4,
                 series = ?5, series_index = ?6, publisher = ?7, language = ?8, published = ?9,
@@ -317,7 +384,6 @@ impl Library {
 
     /// Deletes a book from the catalog and removes its directory.
     pub fn remove_book(&self, id: BookId) -> Result<()> {
-        self.check_writable()?;
         let dir: Option<String> = self
             .conn()
             .query_row("SELECT path FROM books WHERE id = ?1", [id], |r| r.get(0))
@@ -325,8 +391,17 @@ impl Library {
         let Some(dir) = dir else {
             return Err(Error::NotFound(id));
         };
-        self.conn()
-            .execute("DELETE FROM books WHERE id = ?1", [id])?;
+        if self.catalog == Catalog::Calibre {
+            self.calibre_write(|tx| {
+                // Calibre's delete trigger clears the link, data and comment rows.
+                tx.execute("DELETE FROM books WHERE id = ?1", [id])?;
+                tx.execute("DELETE FROM metadata_dirtied WHERE book = ?1", [id])?;
+                calibre::remove_unused_items(tx)
+            })?;
+        } else {
+            self.conn()
+                .execute("DELETE FROM books WHERE id = ?1", [id])?;
+        }
         if !dir.is_empty() {
             let path = self.root.join(&dir);
             if path.exists() {
@@ -391,7 +466,9 @@ impl Library {
 
     /// Replaces the cover image with `data` (stored as `cover.<ext>`).
     pub fn set_cover(&self, id: BookId, data: &[u8], extension: &str) -> Result<()> {
-        self.check_writable()?;
+        if self.catalog == Catalog::Calibre {
+            return self.write_calibre_cover(id, &calibre::cover_jpeg(data)?);
+        }
         let dir = self.book_path(id)?;
         if let Some(old) = self.cover_path(id)? {
             let _ = std::fs::remove_file(old);

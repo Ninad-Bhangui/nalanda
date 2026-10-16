@@ -41,3 +41,4 @@ INSERT INTO data VALUES(4,1,'TXT',10,'The Hobbit - J. R. R. Tolkien');
 INSERT INTO data VALUES(5,2,'KEPUB',1140,'Emma - Jane Austen');
 INSERT INTO data VALUES(6,2,'DJVU',8,'Emma - Jane Austen');
 INSERT INTO data VALUES(7,4,'TXT',12,'The Masnavi - Jalal ad-Din Rumi');
+INSERT INTO library_id VALUES(1,'d4e62f61-72e6-403a-8a93-6ff9e140597f');

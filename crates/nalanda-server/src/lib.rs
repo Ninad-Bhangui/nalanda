@@ -82,7 +82,7 @@ impl From<nalanda_library::Error> for ApiError {
         let status = match &e {
             NotFound(_) | MissingFormat(..) => StatusCode::NOT_FOUND,
             Format(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            ReadOnly => StatusCode::FORBIDDEN,
+            Cover(_) => StatusCode::UNPROCESSABLE_ENTITY,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         ApiError(status, e.to_string())

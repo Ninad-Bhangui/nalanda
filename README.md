@@ -10,7 +10,10 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
   (recent, title, author). Files are stored in calibre's on-disk layout, `Author/Title (id)/`.
   The library folder defaults to `~/Nalanda Library`. Use "Change library…" in the sidebar to open
   another library or start a new one in an empty folder. Existing calibre libraries open in place
-  (read-only for now), with no import step.
+  with no import step, and edits are written to calibre's own `metadata.db`, so calibre sees them
+  too. Before its first change to a calibre library, Nalanda copies `metadata.db` to
+  `~/.local/share/nalanda/calibre-backups/` (or the platform's data directory). Don't edit the
+  same library in Nalanda and calibre at the same time.
 - **Metadata & covers**: EPUB 2/3 metadata (title, authors, series, tags, ISBN, …) and embedded
   covers, plus PDF document info. Metadata can be edited in the app.
 - **Reader**: a native reflowable reader for EPUB/TXT/HTML with a table of contents (it also splits

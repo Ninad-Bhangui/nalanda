@@ -163,25 +163,15 @@ fn sanitize_produces_safe_components() {
 /// books (see `tests_calibre_fixture.sql`). Files are not needed for reading.
 fn calibre_fixture() -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
-    let conn = Connection::open(root.path().join("metadata.db")).unwrap();
-    // Calibre's insert triggers call these SQL functions.
-    conn.create_scalar_function(
-        "title_sort",
-        1,
-        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
-        |ctx| Ok(calibre::title_sort(&ctx.get::<String>(0)?)),
-    )
-    .unwrap();
-    conn.create_scalar_function(
-        "uuid4",
-        0,
-        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
-        |_| Ok("00000000-0000-4000-8000-000000000000"),
-    )
-    .unwrap();
-    conn.execute_batch(include_str!("calibre_schema.sql"))
+    let db = root.path().join("metadata.db");
+    Connection::open(&db)
+        .unwrap()
+        .execute_batch(include_str!("calibre_schema.sql"))
         .unwrap();
-    conn.execute_batch(include_str!("tests_calibre_fixture.sql"))
+    // Insert the rows with calibre's SQL functions available to its triggers.
+    calibre::open(&db)
+        .unwrap()
+        .execute_batch(include_str!("tests_calibre_fixture.sql"))
         .unwrap();
     root
 }
@@ -288,14 +278,177 @@ fn reads_a_calibre_library() {
         ["Good Omens"]
     );
     assert!(lib.list(Some("%"), SortBy::Title).unwrap().is_empty());
+}
 
-    // Nothing is written to a calibre library yet.
-    assert!(matches!(lib.remove_book(1), Err(Error::ReadOnly)));
-    assert!(matches!(
-        lib.update_metadata(1, &Metadata::default()),
-        Err(Error::ReadOnly)
-    ));
+#[test]
+fn writes_a_calibre_library() {
+    let root = calibre_fixture();
+    let src = tempfile::tempdir().unwrap();
+    let backups = tempfile::tempdir().unwrap();
+    let lib =
+        Library::open_with_backup_dir(root.path().into(), Some(backups.path().into())).unwrap();
+    let db = || Connection::open(root.path().join("metadata.db")).unwrap();
+    let count = |sql: &str| -> i64 { db().query_row(sql, [], |r| r.get(0)).unwrap() };
+
+    // Import: calibre's ASCII folder and file names, a PNG cover stored as cover.jpg.
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(4, 6, image::Rgb([200, 30, 30]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let solaris = src.path().join("solaris.epub");
+    nalanda_formats::epub::write_epub(
+        &solaris,
+        &Metadata {
+            title: "Solaris".into(),
+            authors: vec!["Stanisław Lem".into()],
+            language: Some("pl".into()),
+            ..Default::default()
+        },
+        &[Chapter {
+            title: None,
+            blocks: vec![Block::Paragraph("Ocean".into())],
+        }],
+        Some(&Cover {
+            data: png,
+            media_type: "image/png".into(),
+        }),
+    )
+    .unwrap();
+    let book = lib.add_book(&solaris).unwrap();
+    assert_eq!(book.id, 5);
+    assert_eq!(book.metadata.language.as_deref(), Some("pol"));
+    assert_eq!(
+        lib.format_path(5, BookFormat::Epub).unwrap(),
+        root.path()
+            .join("Stanislaw Lem/Solaris (5)/Solaris - Stanislaw Lem.epub")
+    );
+    let cover = std::fs::read(lib.cover_path(5).unwrap().unwrap()).unwrap();
+    assert!(
+        cover.starts_with(&[0xff, 0xd8, 0xff]),
+        "cover re-encoded as JPEG"
+    );
+    let (sort, uuid): (String, String) = db()
+        .query_row("SELECT sort, uuid FROM books WHERE id = 5", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(sort, "Solaris");
+    assert_eq!(uuid.len(), 36, "calibre's insert trigger ran");
+
+    // The catalog as it was before Nalanda's first write is kept.
+    let backup = backups
+        .path()
+        .join("d4e62f61-72e6-403a-8a93-6ff9e140597f.db");
+    let backup =
+        Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let before: i64 = backup
+        .query_row("SELECT count(*) FROM books", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(before, 4);
+
+    // Edit: drop an author, change tags, series and language, set a date.
+    let mut m = lib.get(3).unwrap().metadata;
+    m.authors = vec!["Terry Pratchett".into()];
+    m.tags = vec!["Humour".into(), "Satire".into()];
+    m.series = None;
+    m.language = Some("en-GB".into());
+    m.published = Some("1990-05-01".into());
+    m.description = None;
+    let updated = lib.update_metadata(3, &m).unwrap();
+    m.series_index = None;
+    m.language = Some("eng".into());
+    assert_eq!(updated.metadata, m);
+    // Unused authors, tags and series are removed, as calibre does.
+    assert_eq!(
+        count("SELECT count(*) FROM authors WHERE name = 'Neil Gaiman'"),
+        0
+    );
+    assert_eq!(count("SELECT count(*) FROM tags WHERE name = 'Fantasy'"), 1);
+    assert_eq!(count("SELECT count(*) FROM series"), 0);
+    assert_eq!(count("SELECT count(*) FROM comments WHERE book = 3"), 0);
+    // Calibre will rewrite metadata.opf for changed books.
+    assert_eq!(
+        count("SELECT count(*) FROM metadata_dirtied WHERE book IN (3, 5)"),
+        2
+    );
+    // Setting the first language keeps calibre's other languages.
+    let mut hobbit = lib.get(1).unwrap().metadata;
+    hobbit.language = Some("eng".into());
+    lib.update_metadata(1, &hobbit).unwrap();
+    let langs: Vec<String> = db()
+        .prepare(
+            "SELECT g.lang_code FROM books_languages_link l JOIN languages g ON g.id = l.lang_code
+             WHERE l.book = 1 ORDER BY l.item_order",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(langs, ["eng", "deu"]);
+
+    // A second format, then replacing it after a title change moves it to the new name.
+    let txt = src.path().join("s.txt");
+    std::fs::write(&txt, "ocean").unwrap();
+    lib.add_format(5, &txt, BookFormat::Txt).unwrap();
+    let old_txt = lib.format_path(5, BookFormat::Txt).unwrap();
+    let mut solaris_m = lib.get(5).unwrap().metadata;
+    solaris_m.title = "Solaris: A Novel".into();
+    lib.update_metadata(5, &solaris_m).unwrap();
+    lib.add_format(5, &txt, BookFormat::Txt).unwrap();
+    let new_txt = lib.format_path(5, BookFormat::Txt).unwrap();
+    assert_eq!(
+        new_txt.file_name().unwrap(),
+        "Solaris_ A Novel - Stanislaw Lem.txt"
+    );
+    assert!(new_txt.exists() && !old_txt.exists());
+
+    // Remove: rows, files and the now-empty author folder go.
+    lib.remove_book(5).unwrap();
+    assert!(!root.path().join("Stanislaw Lem").exists());
+    assert_eq!(count("SELECT count(*) FROM data WHERE book = 5"), 0);
+    assert_eq!(
+        count("SELECT count(*) FROM authors WHERE name = 'Stanisław Lem'"),
+        0
+    );
+    assert_eq!(
+        count("SELECT count(*) FROM languages WHERE lang_code = 'pol'"),
+        0
+    );
+    assert!(matches!(lib.get(5), Err(Error::NotFound(5))));
     assert_eq!(lib.list(None, SortBy::Title).unwrap().len(), 4);
+}
+
+#[test]
+fn calibre_file_names() {
+    let m = |title: &str, author: &str| Metadata {
+        title: title.into(),
+        authors: vec![author.into()],
+        ..Default::default()
+    };
+    assert_eq!(
+        calibre::book_path_name(12, &m("Jalāl's: Collected?", "Jalāl ad-Dīn Rūmī")),
+        "Jalal ad-Din Rumi/Jalal's_ Collected_ (12)"
+    );
+    assert_eq!(
+        calibre::book_path_name(1, &m("  ", "Con")),
+        "Conw/Unknown (1)"
+    );
+    // Expected values are calibre 6.13's own construct_path_name output.
+    assert_eq!(
+        calibre::book_path_name(7, &m("...", "A. B. ")),
+        "A. B_/_ (7)"
+    );
+    assert_eq!(
+        calibre::book_path_name(8, &m("A/B+C*D", "x|y")),
+        "x_y/A_B_C_D (8)"
+    );
+    let long = "x".repeat(150);
+    let path = calibre::book_path_name(123, &m(&long, "A"));
+    assert_eq!(path, format!("A/{} (123)", "x".repeat(95)));
+    let (file, name) = calibre::format_file_name(&m(&long, "Jane Austen"), BookFormat::Kepub);
+    assert_eq!(name, format!("{} - Jane Austen", "x".repeat(42)));
+    assert_eq!(file, format!("{name}.kepub"));
 }
 
 #[test]
