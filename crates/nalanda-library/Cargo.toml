@@ -1,6 +1,6 @@
 [package]
 name = "nalanda-library"
-description = "On-disk ebook library: SQLite catalog plus a calibre-style folder layout"
+description = "Ebook library stored as a calibre library (metadata.db plus calibre's folder layout)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,10 +9,15 @@ license.workspace = true
 nalanda-core.workspace = true
 nalanda-formats.workspace = true
 thiserror.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, features = ["functions"] }
 serde_json.workspace = true
 serde.workspace = true
 chrono.workspace = true
+deunicode = "1"
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+isolang = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile.workspace = true

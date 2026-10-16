@@ -34,6 +34,8 @@ pub struct Settings {
     pub appearance: Appearance,
     pub reader_theme: ReaderTheme,
     pub reader_font_size: f32,
+    /// Library folder chosen in the app; `None` means the default.
+    pub library_dir: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -42,6 +44,7 @@ impl Default for Settings {
             appearance: Appearance::System,
             reader_theme: ReaderTheme::App,
             reader_font_size: 18.0,
+            library_dir: None,
         }
     }
 }
@@ -69,6 +72,23 @@ impl Settings {
     }
 }
 
+/// Checks that `dir` can be used as the library folder: an existing calibre
+/// (or Nalanda 0.0.1) library, or an empty folder for a new one. This keeps Nalanda
+/// from writing its catalog into, say, the home directory.
+pub fn check_library_folder(dir: &Path) -> Result<(), String> {
+    if nalanda_library::Library::exists_at(dir) {
+        return Ok(());
+    }
+    let mut entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if entries.next().is_none() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not empty. Choose an empty folder or an existing library.",
+        dir.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +103,7 @@ mod tests {
             appearance: Appearance::Dark,
             reader_theme: ReaderTheme::Sepia,
             reader_font_size: 22.0,
+            library_dir: Some("/books/Library".into()),
         };
         custom.save(&path).unwrap();
         assert_eq!(Settings::load(&path), custom);
@@ -96,5 +117,34 @@ mod tests {
 
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
+    }
+
+    #[test]
+    fn library_folder_must_be_empty_or_an_existing_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(check_library_folder(&empty).is_ok());
+
+        let existing = dir.path().join("existing");
+        nalanda_library::Library::open(&existing).unwrap();
+        assert!(check_library_folder(&existing).is_ok());
+
+        let calibre = dir.path().join("calibre");
+        std::fs::create_dir(&calibre).unwrap();
+        std::fs::write(calibre.join("metadata.db"), "").unwrap();
+        assert!(check_library_folder(&calibre).is_ok());
+
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(home.join("notes.txt"), "").unwrap();
+        assert!(
+            check_library_folder(&home)
+                .unwrap_err()
+                .contains("not empty")
+        );
+        assert!(!home.join("metadata.db").exists());
+
+        assert!(check_library_folder(&dir.path().join("missing")).is_err());
     }
 }

@@ -69,7 +69,7 @@ pub struct NalandaApp {
     editor: Option<Editor>,
     status: Option<Status>,
     busy: Option<SharedString>,
-    server: Option<SharedString>,
+    server: Option<crate::server::Server>,
     settings: Settings,
     settings_path: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
@@ -79,7 +79,9 @@ impl NalandaApp {
     pub fn new(
         library: Arc<Library>,
         converters: Arc<Converters>,
+        settings: Settings,
         imports: Vec<PathBuf>,
+        warning: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -97,11 +99,6 @@ impl NalandaApp {
                 this.apply_appearance(window, cx);
             }
         });
-        let settings_path = Settings::default_path();
-        let settings = settings_path
-            .as_deref()
-            .map(Settings::load)
-            .unwrap_or_default();
         let mut app = Self {
             library,
             converters,
@@ -113,11 +110,14 @@ impl NalandaApp {
             devices: Vec::new(),
             device_books: Vec::new(),
             editor: None,
-            status: None,
+            status: warning.map(|text| Status {
+                text: text.into(),
+                error: true,
+            }),
             busy: None,
             server: None,
             settings,
-            settings_path,
+            settings_path: Settings::default_path(),
             _subscriptions: vec![subscription, appearance],
         };
         app.apply_appearance(window, cx);
@@ -527,20 +527,87 @@ impl NalandaApp {
     }
 
     fn toggle_server(&mut self, cx: &mut Context<Self>) {
-        if self.server.is_some() {
-            return; // stopping is not supported yet; it runs until Nalanda quits
-        }
-        match crate::server::start(self.library.clone(), self.converters.clone()) {
-            Ok(addr) => {
-                let url: SharedString = format!("http://{addr}").into();
-                self.set_info(format!(
+        if let Some(server) = self.server.take() {
+            server.stop();
+            self.set_info("Content server stopped");
+        } else {
+            match self.start_server() {
+                Ok(url) => self.set_info(format!(
                     "Content server running at {url} (OPDS at {url}/opds)"
-                ));
-                self.server = Some(url);
+                )),
+                Err(e) => self.set_error(e),
             }
-            Err(e) => self.set_error(format!("Could not start server: {e}")),
         }
         cx.notify();
+    }
+
+    /// Starts the content server for the current library and returns its URL.
+    fn start_server(&mut self) -> Result<String, String> {
+        let server = crate::server::start(self.library.clone(), self.converters.clone())
+            .map_err(|e| format!("Could not start server: {e}"))?;
+        let url = format!("http://{}", server.addr());
+        self.server = Some(server);
+        Ok(url)
+    }
+
+    fn prompt_switch_library(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Use as library".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = paths.await;
+            this.update(cx, |this, cx| match picked {
+                Ok(Ok(Some(mut paths))) if !paths.is_empty() => {
+                    this.switch_library(paths.swap_remove(0), cx)
+                }
+                Ok(Err(e)) => {
+                    this.set_error(format!("Folder picker unavailable: {e}"));
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Opens the library in `dir` (creating it if the folder is empty) and
+    /// remembers it for the next launch. A running content server moves along.
+    fn switch_library(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
+        if self.busy.is_some() || dir == self.library.root() {
+            return;
+        }
+        if let Err(e) = crate::settings::check_library_folder(&dir) {
+            self.set_error(e);
+            cx.notify();
+            return;
+        }
+        let library = match Library::open(&dir) {
+            Ok(library) => Arc::new(library),
+            Err(e) => {
+                self.set_error(format!("Could not open library {}: {e}", dir.display()));
+                cx.notify();
+                return;
+            }
+        };
+        self.library = library;
+        self.selected = None;
+        self.editor = None;
+        if matches!(self.view, View::Reader(_)) {
+            self.view = View::Library;
+        }
+        self.set_info(format!("Switched to library {}", dir.display()));
+        self.reload(cx);
+        if let Some(server) = self.server.take() {
+            server.stop();
+            if let Err(e) = self.start_server() {
+                self.set_error(e);
+            }
+        }
+        self.update_settings(cx, |s| s.library_dir = Some(dir));
     }
 
     // ----- metadata editor -----------------------------------------------------------
@@ -686,10 +753,21 @@ impl NalandaApp {
             .child(div().flex_1())
             .child(h_flex().gap_1().child(label("Theme")).child(appearance))
             .child(match &self.server {
-                Some(url) => div()
-                    .text_sm()
-                    .text_color(theme.success)
-                    .child(format!("● Serving {url}"))
+                Some(server) => h_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.success)
+                            .child(format!("● Serving http://{}", server.addr())),
+                    )
+                    .child(
+                        Button::new("stop-serve")
+                            .ghost()
+                            .small()
+                            .label("Stop")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_server(cx))),
+                    )
                     .into_any_element(),
                 None => Button::new("serve")
                     .ghost()
@@ -796,11 +874,23 @@ impl NalandaApp {
             .child(devices)
             .child(div().flex_1())
             .child(
-                div()
+                v_flex()
                     .px_3()
+                    .items_start()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(format!("Library: {}", self.library.root().display())),
+                    .child(format!("Library: {}", self.library.root().display()))
+                    .child(
+                        Button::new("switch-library")
+                            .ghost()
+                            .xsmall()
+                            .label("Change library…")
+                            .tooltip(
+                                "Open another library folder, or an empty folder for a new one",
+                            )
+                            .disabled(self.busy.is_some())
+                            .on_click(cx.listener(|this, _, _, cx| this.prompt_switch_library(cx))),
+                    ),
             )
             .child(
                 div()

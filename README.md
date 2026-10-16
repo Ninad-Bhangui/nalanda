@@ -7,7 +7,14 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
 ## Features
 
 - **Library**: import EPUB/KEPUB/PDF/MOBI/AZW3/FB2/TXT/HTML/DOCX/CBZ files, then search and sort them
-  (recent, title, author). Files are stored in calibre's on-disk layout, `Author/Title (id)/`.
+  (recent, title, author). A Nalanda library is a calibre library: calibre's `metadata.db` catalog
+  and its `Author/Title (id)/` folders. Point Nalanda at an existing calibre library (with
+  "Change library…" in the sidebar) and it opens in place, with no import step; calibre opens
+  libraries Nalanda creates. The default folder is `~/Nalanda Library`.
+  Before its first change to an existing calibre library, Nalanda copies `metadata.db` to
+  `~/.local/share/nalanda/calibre-backups/` (or the platform's data directory). Don't edit the
+  same library in Nalanda and calibre at the same time. Libraries made by Nalanda 0.0.1
+  (`nalanda.db`) are converted on first open; the old catalog is moved to the same folder.
 - **Metadata & covers**: EPUB 2/3 metadata (title, authors, series, tags, ISBN, …) and embedded
   covers, plus PDF document info. Metadata can be edited in the app.
 - **Reader**: a native reflowable reader for EPUB/TXT/HTML with a table of contents (it also splits
@@ -18,10 +25,10 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
   books (converting to EPUB when needed) and delete sideloaded books, which also removes them from
   the device database.
 - **Themes**: light, dark, or follow the OS (on Linux through the XDG desktop portal's color-scheme
-  setting). The reader page has its own Light/Sepia/Dark colors. Preferences are saved to
-  `~/.config/nalanda/settings.json` (or the platform's config directory).
+  setting). The reader page has its own Light/Sepia/Dark colors. Preferences, including the
+  library folder, are saved to `~/.config/nalanda/settings.json` (or the platform's config directory).
 - **Content server**: a JSON API and an OPDS feed, either embedded in the desktop app
-  ("Start server") or headless via `nalanda-server`.
+  ("Start server", which can be stopped again) or headless via `nalanda-server`.
 
 ## Architecture
 
@@ -36,8 +43,8 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
                     │   │ (axum)         │
                     │   └─────┬──────────┘
          ┌──────────▼─────────▼──────┐   ┌────────────────┐
-         │ nalanda-library (SQLite   │   │ nalanda-device │ ← local USB only
-         │  + calibre layout)        │   │ (Kobo)         │
+         │ nalanda-library (calibre  │   │ nalanda-device │ ← local USB only
+         │  library: metadata.db)    │   │ (Kobo)         │
          └──────┬────────────────────┘   └────────────────┘
    ┌────────────▼────┐   ┌─────────────────┐
    │ nalanda-formats │◄──│ nalanda-convert │ → calibre ebook-convert (optional)
@@ -49,7 +56,7 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
 | ----------------- | ----------------------------------------------------------------------- |
 | `nalanda-core`    | `Book`, `Metadata`, `BookFormat`. These double as the API's JSON types. |
 | `nalanda-formats` | Metadata/cover extraction, the reader's content model, EPUB writer      |
-| `nalanda-library` | SQLite catalog and file storage; `Sync`, shared by desktop and server   |
+| `nalanda-library` | Calibre library: `metadata.db` and book files; shared by desktop/server |
 | `nalanda-convert` | Converter backends (built-in, calibre) and library-level conversion     |
 | `nalanda-device`  | Kobo detection, listing, sending and deleting                           |
 | `nalanda-server`  | REST + OPDS over a library (`nalanda-server --library DIR --bind ADDR`) |
@@ -123,7 +130,7 @@ file beside them and run `sha256sum --check --ignore-missing SHA256SUMS`.
 ```sh
 cargo test                       # every crate except the desktop app
 cargo run -p nalanda-server -- --library ~/Nalanda\ Library
-cargo run -p nalanda-desktop       # NALANDA_LIBRARY overrides ~/Nalanda Library
+cargo run -p nalanda-desktop       # NALANDA_LIBRARY overrides the chosen library folder
 ```
 
 On Debian/Ubuntu, the GPUI app needs:

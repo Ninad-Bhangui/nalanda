@@ -1,7 +1,8 @@
 //! Nalanda desktop: a calibre-style ebook manager built on GPUI.
 //!
 //! Usage: `nalanda [FILES...]`. Files given on the command line are imported.
-//! `NALANDA_LIBRARY` overrides the library directory (default `~/Nalanda Library`).
+//! The library folder is the one chosen in the app (default `~/Nalanda Library`);
+//! `NALANDA_LIBRARY` overrides it.
 
 mod app;
 mod reader;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use gpui_kit::*;
+use settings::Settings;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -21,11 +23,28 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let library_dir = match std::env::var_os("NALANDA_LIBRARY") {
-        Some(dir) => PathBuf::from(dir),
-        None => std::env::var_os("HOME")
+    let settings = Settings::default_path()
+        .as_deref()
+        .map(Settings::load)
+        .unwrap_or_default();
+    let default_dir = || {
+        std::env::var_os("HOME")
             .map(|h| PathBuf::from(h).join("Nalanda Library"))
-            .context("set NALANDA_LIBRARY")?,
+            .context("set NALANDA_LIBRARY")
+    };
+    let mut warning = None;
+    let library_dir = match (std::env::var_os("NALANDA_LIBRARY"), &settings.library_dir) {
+        (Some(dir), _) => PathBuf::from(dir),
+        (None, Some(dir)) if dir.is_dir() => dir.clone(),
+        // Don't recreate a chosen folder that is gone, e.g. on an unplugged drive.
+        (None, Some(dir)) => {
+            warning = Some(format!(
+                "Library folder {} not found; opened the default library instead",
+                dir.display()
+            ));
+            default_dir()?
+        }
+        (None, None) => default_dir()?,
     };
     let library = Arc::new(nalanda_library::Library::open(&library_dir)?);
     let converters = Arc::new(nalanda_convert::Converters::default());
@@ -44,7 +63,9 @@ fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
-            cx.new(|cx| app::NalandaApp::new(library, converters, imports, window, cx))
+            cx.new(|cx| {
+                app::NalandaApp::new(library, converters, settings, imports, warning, window, cx)
+            })
         })
         .expect("failed to open window");
         cx.activate(true);
