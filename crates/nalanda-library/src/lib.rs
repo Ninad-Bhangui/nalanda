@@ -8,7 +8,11 @@
 //! ```
 //!
 //! The layout mirrors calibre's, so the files stay usable without Nalanda.
+//! A calibre library (one with calibre's `metadata.db`) also opens directly,
+//! read-only for now; see [`calibre`].
 //! [`Library`] is `Sync` and is shared by the desktop app and the server.
+
+mod calibre;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -29,6 +33,8 @@ pub enum Error {
     NotFound(BookId),
     #[error("book {0} has no {1} file")]
     MissingFormat(BookId, BookFormat),
+    #[error("calibre libraries are read-only in this version of Nalanda")]
+    ReadOnly,
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -74,15 +80,32 @@ pub enum SortBy {
 /// Catalog file inside a library folder.
 const DB_FILE: &str = "nalanda.db";
 
+/// Which catalog a library folder uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Catalog {
+    Nalanda,
+    Calibre,
+}
+
 pub struct Library {
     root: PathBuf,
     conn: Mutex<Connection>,
+    catalog: Catalog,
 }
 
 impl Library {
-    /// Opens the library at `root`, creating it if needed.
+    /// Opens the library at `root`, creating it if needed. A calibre library
+    /// is opened in place.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
+        let calibre_db = root.join(calibre::DB_FILE);
+        if calibre_db.is_file() {
+            return Ok(Self {
+                conn: Mutex::new(calibre::open_read_only(&calibre_db)?),
+                root,
+                catalog: Catalog::Calibre,
+            });
+        }
         std::fs::create_dir_all(&root)?;
         let conn = Connection::open(root.join(DB_FILE))?;
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
@@ -90,12 +113,20 @@ impl Library {
         Ok(Self {
             root,
             conn: Mutex::new(conn),
+            catalog: Catalog::Nalanda,
         })
     }
 
-    /// Whether `root` already holds a Nalanda library.
+    /// Whether `root` already holds a Nalanda or calibre library.
     pub fn exists_at(root: &Path) -> bool {
-        root.join(DB_FILE).is_file()
+        root.join(DB_FILE).is_file() || root.join(calibre::DB_FILE).is_file()
+    }
+
+    fn check_writable(&self) -> Result<()> {
+        match self.catalog {
+            Catalog::Nalanda => Ok(()),
+            Catalog::Calibre => Err(Error::ReadOnly),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -109,6 +140,7 @@ impl Library {
     /// Imports an ebook file: reads its metadata and cover and copies it into
     /// the library. The source file is left untouched.
     pub fn add_book(&self, source: &Path) -> Result<Book> {
+        self.check_writable()?;
         let info = nalanda_formats::read_book_info(source)?;
         let now = Utc::now();
         let id = {
@@ -166,6 +198,7 @@ impl Library {
     /// Copies `source` into the book's directory as its `format` file,
     /// replacing any existing file of that format.
     pub fn add_format(&self, id: BookId, source: &Path, format: BookFormat) -> Result<()> {
+        self.check_writable()?;
         let book = self.get(id)?;
         let dir = self.book_path(id)?;
         let file_name = format!(
@@ -196,6 +229,9 @@ impl Library {
 
     pub fn get(&self, id: BookId) -> Result<Book> {
         let conn = self.conn();
+        if self.catalog == Catalog::Calibre {
+            return calibre::get(&conn, id)?.ok_or(Error::NotFound(id));
+        }
         let mut book = conn
             .query_row(&format!("{SELECT_BOOK} WHERE id = ?1"), [id], row_to_book)
             .optional()?
@@ -212,7 +248,6 @@ impl Library {
             SortBy::Title => "sort_title COLLATE NOCASE, id",
             SortBy::Author => "author_sort COLLATE NOCASE, series COLLATE NOCASE, series_index, id",
         };
-        let conn = self.conn();
         let terms: Vec<String> = query
             .unwrap_or_default()
             .split_whitespace()
@@ -225,6 +260,10 @@ impl Library {
                 )
             })
             .collect();
+        let conn = self.conn();
+        if self.catalog == Catalog::Calibre {
+            return calibre::list(&conn, &terms, sort);
+        }
         let mut sql = SELECT_BOOK.to_owned();
         for (i, _) in terms.iter().enumerate() {
             sql.push_str(if i == 0 { " WHERE " } else { " AND " });
@@ -247,6 +286,7 @@ impl Library {
 
     /// Replaces a book's metadata. Files keep their names; only the catalog changes.
     pub fn update_metadata(&self, id: BookId, m: &Metadata) -> Result<Book> {
+        self.check_writable()?;
         let changed = self.conn().execute(
             "UPDATE books SET title = ?1, sort_title = ?2, authors = ?3, author_sort = ?4,
                 series = ?5, series_index = ?6, publisher = ?7, language = ?8, published = ?9,
@@ -277,6 +317,7 @@ impl Library {
 
     /// Deletes a book from the catalog and removes its directory.
     pub fn remove_book(&self, id: BookId) -> Result<()> {
+        self.check_writable()?;
         let dir: Option<String> = self
             .conn()
             .query_row("SELECT path FROM books WHERE id = ?1", [id], |r| r.get(0))
@@ -303,6 +344,10 @@ impl Library {
 
     /// Absolute path of the book's directory.
     pub fn book_path(&self, id: BookId) -> Result<PathBuf> {
+        if self.catalog == Catalog::Calibre {
+            let dir = calibre::book_dir(&self.conn(), id)?.ok_or(Error::NotFound(id))?;
+            return Ok(self.root.join(dir));
+        }
         let dir: String = self
             .conn()
             .query_row("SELECT path FROM books WHERE id = ?1", [id], |r| r.get(0))
@@ -312,6 +357,11 @@ impl Library {
     }
 
     pub fn format_path(&self, id: BookId, format: BookFormat) -> Result<PathBuf> {
+        if self.catalog == Catalog::Calibre {
+            let file = calibre::format_file(&self.conn(), id, format)?
+                .ok_or(Error::MissingFormat(id, format))?;
+            return Ok(self.root.join(file));
+        }
         let file: Option<String> = self
             .conn()
             .query_row(
@@ -325,6 +375,10 @@ impl Library {
     }
 
     pub fn cover_path(&self, id: BookId) -> Result<Option<PathBuf>> {
+        if self.catalog == Catalog::Calibre {
+            let cover = calibre::cover_file(&self.conn(), id)?.ok_or(Error::NotFound(id))?;
+            return Ok(cover.map(|c| self.root.join(c)));
+        }
         let row: Option<(String, Option<String>)> = self
             .conn()
             .query_row("SELECT path, cover FROM books WHERE id = ?1", [id], |r| {
@@ -337,6 +391,7 @@ impl Library {
 
     /// Replaces the cover image with `data` (stored as `cover.<ext>`).
     pub fn set_cover(&self, id: BookId, data: &[u8], extension: &str) -> Result<()> {
+        self.check_writable()?;
         let dir = self.book_path(id)?;
         if let Some(old) = self.cover_path(id)? {
             let _ = std::fs::remove_file(old);

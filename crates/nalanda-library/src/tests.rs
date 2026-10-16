@@ -158,3 +158,156 @@ fn sanitize_produces_safe_components() {
     assert_eq!(sort_title("The Hobbit"), "Hobbit, The");
     assert_eq!(sort_title("Theory"), "Theory");
 }
+
+/// A calibre library holding the rows calibre 6.13's `calibredb` wrote for four
+/// books (see `tests_calibre_fixture.sql`). Files are not needed for reading.
+fn calibre_fixture() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let conn = Connection::open(root.path().join("metadata.db")).unwrap();
+    // Calibre's insert triggers call these SQL functions.
+    conn.create_scalar_function(
+        "title_sort",
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |ctx| Ok(calibre::title_sort(&ctx.get::<String>(0)?)),
+    )
+    .unwrap();
+    conn.create_scalar_function(
+        "uuid4",
+        0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |_| Ok("00000000-0000-4000-8000-000000000000"),
+    )
+    .unwrap();
+    conn.execute_batch(include_str!("calibre_schema.sql"))
+        .unwrap();
+    conn.execute_batch(include_str!("tests_calibre_fixture.sql"))
+        .unwrap();
+    root
+}
+
+#[test]
+fn reads_a_calibre_library() {
+    let root = calibre_fixture();
+    let lib = Library::open(root.path()).unwrap();
+
+    let omens = lib.get(3).unwrap();
+    let mut identifiers = std::collections::BTreeMap::new();
+    identifiers.insert("goodreads".to_owned(), "12067".to_owned());
+    identifiers.insert("isbn".to_owned(), "9780575048003".to_owned());
+    assert_eq!(
+        omens.metadata,
+        Metadata {
+            title: "Good Omens".into(),
+            // Calibre keeps authors in link order, not alphabetical.
+            authors: vec!["Terry Pratchett".into(), "Neil Gaiman".into()],
+            series: Some("Discworld-ish".into()),
+            series_index: Some(2.5),
+            publisher: Some("Gollancz".into()),
+            language: Some("eng".into()),
+            // Calibre stores date-only values shifted off the 1st of the month.
+            published: Some("1990-05-02".into()),
+            description: Some("<p>Apocalypse <b>comedy</b></p>".into()),
+            tags: vec!["Fantasy".into(), "Humour".into()],
+            identifiers,
+        }
+    );
+    assert!(omens.has_cover);
+    assert_eq!(
+        omens.added_at.to_rfc3339(),
+        "2026-10-16T08:28:35.115527+00:00"
+    );
+
+    // Unknown formats (DJVU) are hidden; KEPUB maps to Nalanda's Kepub.
+    let emma = lib.get(2).unwrap();
+    assert_eq!(
+        emma.formats,
+        [
+            FormatFile {
+                format: BookFormat::Epub,
+                size: 1140
+            },
+            FormatFile {
+                format: BookFormat::Kepub,
+                size: 1140
+            },
+        ]
+    );
+    assert_eq!(emma.metadata.published, None, "calibre's undefined date");
+    assert_eq!(emma.metadata.series_index, None);
+    assert_eq!(
+        lib.format_path(2, BookFormat::Kepub).unwrap(),
+        root.path()
+            .join("Jane Austen/Emma (2)/Emma - Jane Austen.kepub")
+    );
+    assert_eq!(
+        lib.cover_path(2).unwrap(),
+        Some(root.path().join("Jane Austen/Emma (2)/cover.jpg"))
+    );
+    assert_eq!(lib.cover_path(4).unwrap(), None);
+    assert!(matches!(
+        lib.format_path(3, BookFormat::Pdf),
+        Err(Error::MissingFormat(3, BookFormat::Pdf))
+    ));
+    assert!(matches!(lib.get(99), Err(Error::NotFound(99))));
+    // The first language in calibre's order.
+    assert_eq!(
+        lib.get(1).unwrap().metadata.language.as_deref(),
+        Some("deu")
+    );
+
+    let titles = |books: Vec<Book>| {
+        books
+            .into_iter()
+            .map(|b| b.metadata.title)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        titles(lib.list(None, SortBy::Title).unwrap()),
+        ["Emma", "Good Omens", "The Hobbit", "The Masnavi"]
+    );
+    assert_eq!(
+        titles(lib.list(None, SortBy::Author).unwrap()),
+        ["Emma", "Good Omens", "The Masnavi", "The Hobbit"]
+    );
+    assert_eq!(
+        titles(lib.list(None, SortBy::RecentlyAdded).unwrap()),
+        ["The Masnavi", "Good Omens", "Emma", "The Hobbit"]
+    );
+    // Search covers every author, series and tag, not just the first.
+    assert_eq!(
+        titles(lib.list(Some("gaiman"), SortBy::Title).unwrap()),
+        ["Good Omens"]
+    );
+    assert_eq!(
+        titles(lib.list(Some("fantasy"), SortBy::Title).unwrap()),
+        ["Good Omens", "The Hobbit"]
+    );
+    assert_eq!(
+        titles(lib.list(Some("discworld humour"), SortBy::Title).unwrap()),
+        ["Good Omens"]
+    );
+    assert!(lib.list(Some("%"), SortBy::Title).unwrap().is_empty());
+
+    // Nothing is written to a calibre library yet.
+    assert!(matches!(lib.remove_book(1), Err(Error::ReadOnly)));
+    assert!(matches!(
+        lib.update_metadata(1, &Metadata::default()),
+        Err(Error::ReadOnly)
+    ));
+    assert_eq!(lib.list(None, SortBy::Title).unwrap().len(), 4);
+}
+
+#[test]
+fn title_sort_matches_calibre() {
+    use calibre::title_sort;
+    assert_eq!(title_sort("The Hobbit"), "Hobbit, The");
+    assert_eq!(
+        title_sort("  a Tale of Two Cities"),
+        "Tale of Two Cities, a"
+    );
+    assert_eq!(title_sort("“An Odd Book"), "Odd Book, An");
+    assert_eq!(title_sort("Theory"), "Theory");
+    assert_eq!(title_sort("Anathem"), "Anathem");
+    assert_eq!(title_sort("The"), "The");
+}

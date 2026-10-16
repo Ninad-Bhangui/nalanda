@@ -9,7 +9,7 @@ license.workspace = true
 nalanda-core.workspace = true
 nalanda-formats.workspace = true
 thiserror.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, features = ["functions"] }
 serde_json.workspace = true
 serde.workspace = true
 chrono.workspace = true

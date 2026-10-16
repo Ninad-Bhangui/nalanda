@@ -72,9 +72,9 @@ impl Settings {
     }
 }
 
-/// Checks that `dir` can be used as the library folder: either an existing
-/// Nalanda library or an empty folder for a new one. This keeps Nalanda from
-/// writing its catalog into, say, the home directory or a calibre library.
+/// Checks that `dir` can be used as the library folder: an existing Nalanda
+/// or calibre library, or an empty folder for a new one. This keeps Nalanda
+/// from writing its catalog into, say, the home directory.
 pub fn check_library_folder(dir: &Path) -> Result<(), String> {
     if nalanda_library::Library::exists_at(dir) {
         return Ok(());
@@ -83,15 +83,8 @@ pub fn check_library_folder(dir: &Path) -> Result<(), String> {
     if entries.next().is_none() {
         return Ok(());
     }
-    if dir.join("metadata.db").is_file() {
-        return Err(format!(
-            "{} is a calibre library, which Nalanda can't open. \
-             Choose an empty folder or an existing Nalanda library.",
-            dir.display()
-        ));
-    }
     Err(format!(
-        "{} is not empty. Choose an empty folder or an existing Nalanda library.",
+        "{} is not empty. Choose an empty folder or an existing Nalanda or calibre library.",
         dir.display()
     ))
 }
@@ -140,11 +133,7 @@ mod tests {
         let calibre = dir.path().join("calibre");
         std::fs::create_dir(&calibre).unwrap();
         std::fs::write(calibre.join("metadata.db"), "").unwrap();
-        assert!(
-            check_library_folder(&calibre)
-                .unwrap_err()
-                .contains("calibre")
-        );
+        assert!(check_library_folder(&calibre).is_ok());
 
         let home = dir.path().join("home");
         std::fs::create_dir(&home).unwrap();
