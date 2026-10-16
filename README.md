@@ -58,6 +58,66 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
 Devices are deliberately not part of the server API. A Kobo is plugged into one
 machine, so the desktop process talks to it directly.
 
+## Installation (Linux)
+
+Tagged releases publish packages on the
+[GitHub Releases page](https://github.com/ninad-bhangui/nalanda/releases).
+Prebuilt packages are x86_64. Both packages add Nalanda to your application
+launcher and offer it as an application for opening supported ebook files.
+You need an X11 or Wayland desktop and a working graphics driver (Vulkan recommended).
+Calibre is optional: install it if you want the extra conversion formats provided
+by `ebook-convert`. Your library and settings are kept when upgrading or uninstalling.
+
+### Debian / Ubuntu
+
+Download the `.deb` release asset, then install it with APT so its runtime
+dependencies are installed too:
+
+```sh
+sudo apt install ./nalanda_*.deb
+nalanda
+```
+
+The prebuilt `.deb` is built on Ubuntu 24.04; older distributions may have
+libraries that are too old. On those systems, build from source instead.
+
+### Arch Linux
+
+For a prebuilt release, download the `.pkg.tar.zst` asset and install it:
+
+```sh
+sudo pacman -U ./nalanda-git-*.pkg.tar.zst
+```
+
+Or build the latest development version using the included `PKGBUILD`:
+
+```sh
+sudo pacman -S --needed base-devel git
+git clone https://github.com/ninad-bhangui/nalanda.git
+cd nalanda/packaging/arch
+makepkg -si
+```
+
+Run `makepkg` as your normal user, not root. It installs the required build
+dependencies, compiles and tests the app, and installs both `nalanda` and
+`nalanda-server`. Re-run `makepkg -sif` to rebuild and update to the latest commit.
+This is a `nalanda-git` development package, not an AUR submission; no AUR helper
+is required. Building can take a while because GPUI has a large dependency graph.
+
+### Headless server
+
+The separate `nalanda-server-linux-x86_64.tar.gz` release asset contains the server
+without the desktop application:
+
+```sh
+tar -xzf nalanda-server-linux-x86_64.tar.gz
+sudo install -m755 nalanda-server /usr/local/bin/nalanda-server
+nalanda-server --library ~/Nalanda\ Library
+```
+
+Release assets include `SHA256SUMS`. To check downloaded files, put the checksum
+file beside them and run `sha256sum --check --ignore-missing SHA256SUMS`.
+
 ## Building
 
 ```sh
@@ -69,12 +129,50 @@ cargo run -p nalanda-desktop       # NALANDA_LIBRARY overrides ~/Nalanda Library
 On Debian/Ubuntu, the GPUI app needs:
 
 ```sh
-sudo apt install libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev \
-  libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 clang cmake pkg-config
+sudo apt install build-essential clang cmake pkg-config libfontconfig-dev libfreetype-dev \
+  libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev \
+  libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
 ```
 
 The embedded server binds `127.0.0.1:8083`. The API has no authentication yet,
 so only set `NALANDA_BIND=0.0.0.0:8083` on a trusted network.
+
+### Building a Debian package locally
+
+With a current stable Rust toolchain and the build dependencies above installed:
+
+```sh
+cargo install cargo-deb --version 3.6.2 --locked
+cargo build --release --locked -p nalanda-desktop
+cargo deb -p nalanda-desktop --no-build
+```
+
+The package is written to `target/debian/`. Its linked-library dependencies are
+detected automatically, with runtime-loaded graphics libraries declared explicitly.
+
+## CI and releases
+
+GitHub Actions runs **CI** on branch pushes and pull requests. It tests every
+crate (including desktop), builds Debian and Arch packages, validates the desktop
+launcher, and smoke-tests package installation and shared-library availability.
+Packages can be downloaded from the workflow run's artifacts before a release.
+Arch builds run in an up-to-date Arch container against the exact commit being
+tested, including unmerged pull requests.
+
+The **Release** workflow is the CD path. For a release, update
+`workspace.package.version` in `Cargo.toml` and the workspace versions in
+`Cargo.lock`, commit the changes, then push a matching tag, for example `v0.1.0`.
+The workflow rejects a tag that does not match the manifest version, runs the
+same CI jobs, and only then publishes a GitHub Release containing:
+
+- Desktop `.deb` and Arch `.pkg.tar.zst` packages
+- Standalone server archive
+- Source archive and the Arch `PKGBUILD`
+- SHA-256 checksums and generated release notes
+
+Publishing uses GitHub's built-in token; no additional release secret is needed.
+There is no automatic AUR upload, package repository, or in-app updater yet.
+To upgrade, download and install a newer release using the same commands above.
 
 ## Not yet implemented
 

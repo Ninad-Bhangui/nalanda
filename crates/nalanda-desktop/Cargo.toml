@@ -27,3 +27,19 @@ dirs = "6"
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[package.metadata.deb]
+name = "nalanda"
+maintainer = "Nalanda contributors"
+copyright = "Nalanda contributors"
+license-file = ["../../LICENSE", "0"]
+section = "utils"
+priority = "optional"
+depends = "$auto, libx11-6, libx11-xcb1, libwayland-client0, libwayland-cursor0, libvulkan1"
+recommends = "xdg-desktop-portal"
+suggests = "calibre"
+assets = [
+    ["target/release/nalanda", "usr/bin/", "755"],
+    ["../../packaging/nalanda.desktop", "usr/share/applications/", "644"],
+    ["../../README.md", "usr/share/doc/nalanda/README.md", "644"],
+]

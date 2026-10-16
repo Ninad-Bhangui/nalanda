@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match tag to workspace version
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          with open('Cargo.toml', 'rb') as manifest:
+              version = tomllib.load(manifest)['workspace']['package']['version']
+          tag = os.environ['GITHUB_REF_NAME']
+          if tag != f'v{version}':
+              raise SystemExit(f'Tag {tag!r} must match workspace version v{version}')
+          PY
+
+  build:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish tested packages
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: dist
+      - name: Add source package and checksums
+        run: |
+          git archive --format=tar.gz --prefix="nalanda-${GITHUB_REF_NAME#v}/" \
+            --output="dist/nalanda-${GITHUB_REF_NAME#v}-source.tar.gz" HEAD
+          cp packaging/arch/PKGBUILD dist/PKGBUILD
+          cd dist
+          sha256sum -- * > SHA256SUMS
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

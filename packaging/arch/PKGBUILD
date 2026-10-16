@@ -1,0 +1,53 @@
+pkgname=nalanda-git
+pkgver=0.0.0.r0
+pkgrel=1
+pkgdesc='A calibre-style ebook manager and reader built with GPUI'
+arch=('x86_64')
+url='https://github.com/ninad-bhangui/nalanda'
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'fontconfig' 'freetype2' 'libx11' 'libxcb'
+         'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'vulkan-icd-loader')
+makedepends=('git' 'rust' 'clang' 'cmake' 'pkgconf' 'openssl' 'zstd')
+optdepends=('calibre: additional ebook conversion formats'
+            'xdg-desktop-portal: system theme and desktop integration')
+provides=('nalanda')
+conflicts=('nalanda')
+# Bundled SQLite must not use GCC LTO objects with Rust's LLVM linker.
+options=('!debug' '!lto')
+source=('nalanda::git+https://github.com/ninad-bhangui/nalanda.git')
+sha256sums=('SKIP') # Git sources are versioned by commit, not archive checksum.
+
+pkgver() {
+    cd "$srcdir/nalanda"
+    if git describe --long --tags --match 'v[0-9]*' >/dev/null 2>&1; then
+        git describe --long --tags --match 'v[0-9]*' | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+    else
+        printf '0.0.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    fi
+}
+
+prepare() {
+    cd "$srcdir/nalanda"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked
+}
+
+build() {
+    cd "$srcdir/nalanda"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo build --release --frozen -p nalanda-desktop -p nalanda-server
+}
+
+check() {
+    cd "$srcdir/nalanda"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo test --workspace --frozen
+}
+
+package() {
+    cd "$srcdir/nalanda"
+    install -Dm755 target/release/nalanda "$pkgdir/usr/bin/nalanda"
+    install -Dm755 target/release/nalanda-server "$pkgdir/usr/bin/nalanda-server"
+    install -Dm644 packaging/nalanda.desktop "$pkgdir/usr/share/applications/nalanda.desktop"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/nalanda/README.md"
+}

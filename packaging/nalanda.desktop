@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Nalanda
+Comment=Manage and read your ebook library
+Exec=nalanda %F
+Icon=accessories-text-editor
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/epub+zip;application/pdf;application/x-mobipocket-ebook;application/vnd.amazon.ebook;application/x-fictionbook+xml;text/plain;text/html;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.comicbook+zip;
+StartupNotify=true
