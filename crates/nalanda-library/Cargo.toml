@@ -1,6 +1,6 @@
 [package]
 name = "nalanda-library"
-description = "On-disk ebook library: SQLite catalog plus a calibre-style folder layout"
+description = "Ebook library stored as a calibre library (metadata.db plus calibre's folder layout)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

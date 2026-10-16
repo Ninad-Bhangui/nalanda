@@ -72,8 +72,8 @@ impl Settings {
     }
 }
 
-/// Checks that `dir` can be used as the library folder: an existing Nalanda
-/// or calibre library, or an empty folder for a new one. This keeps Nalanda
+/// Checks that `dir` can be used as the library folder: an existing calibre
+/// (or Nalanda 0.0.1) library, or an empty folder for a new one. This keeps Nalanda
 /// from writing its catalog into, say, the home directory.
 pub fn check_library_folder(dir: &Path) -> Result<(), String> {
     if nalanda_library::Library::exists_at(dir) {
@@ -84,7 +84,7 @@ pub fn check_library_folder(dir: &Path) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "{} is not empty. Choose an empty folder or an existing Nalanda or calibre library.",
+        "{} is not empty. Choose an empty folder or an existing library.",
         dir.display()
     ))
 }
@@ -143,7 +143,7 @@ mod tests {
                 .unwrap_err()
                 .contains("not empty")
         );
-        assert!(!home.join("nalanda.db").exists());
+        assert!(!home.join("metadata.db").exists());
 
         assert!(check_library_folder(&dir.path().join("missing")).is_err());
     }

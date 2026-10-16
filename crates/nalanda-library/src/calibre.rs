@@ -17,6 +17,18 @@ use crate::{Error, Result, SortBy};
 
 pub(crate) const DB_FILE: &str = "metadata.db";
 
+/// Creates an empty catalog the way calibre 6.13 does. Newer calibre versions
+/// upgrade it when they open it.
+pub(crate) fn create(path: &Path) -> Result<()> {
+    let conn = Connection::open(path)?;
+    conn.execute_batch(include_str!("calibre_schema.sql"))?;
+    conn.execute(
+        "INSERT INTO library_id (uuid) VALUES (?1)",
+        [uuid::Uuid::new_v4().to_string()],
+    )?;
+    Ok(())
+}
+
 /// Opens an existing calibre catalog for reading and writing.
 pub(crate) fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open_with_flags(
@@ -564,6 +576,30 @@ pub(crate) fn insert_book(tx: &Transaction<'_>, m: &Metadata) -> Result<(BookId,
     let dir = book_path_name(id, m);
     tx.execute("UPDATE books SET path = ?1 WHERE id = ?2", params![dir, id])?;
     Ok((id, dir))
+}
+
+/// Inserts a book that already has an id and a folder (when converting a
+/// Nalanda 0.0.1 library). Formats are recorded separately.
+pub(crate) fn insert_existing_book(tx: &Transaction<'_>, book: &Book, dir: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO books (id, title, path, has_cover) VALUES (?1, ?2, ?3, ?4)",
+        params![book.id, book.metadata.title, dir, book.has_cover],
+    )?;
+    write_metadata(tx, book.id, &book.metadata)
+}
+
+/// Sets when a book was added and last changed.
+pub(crate) fn set_times(
+    tx: &Transaction<'_>,
+    id: BookId,
+    added: DateTime<Utc>,
+    modified: DateTime<Utc>,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE books SET timestamp = ?1, last_modified = ?2 WHERE id = ?3",
+        params![timestamp(added), timestamp(modified), id],
+    )?;
+    Ok(())
 }
 
 /// The file a format of this book is stored as, relative to its folder.

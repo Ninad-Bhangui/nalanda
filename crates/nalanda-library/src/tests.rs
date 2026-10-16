@@ -1,5 +1,18 @@
 use super::*;
+use nalanda_core::FormatFile;
 use nalanda_formats::{Block, Chapter, Cover};
+
+/// A tiny real JPEG; JPEG covers are stored unchanged.
+fn jpeg() -> Vec<u8> {
+    let mut out = Vec::new();
+    image::RgbImage::from_pixel(2, 3, image::Rgb([10, 120, 40]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut out),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
+    out
+}
 
 fn write_epub(dir: &Path, name: &str, title: &str, authors: &[&str], tags: &[&str]) -> PathBuf {
     let path = dir.join(name);
@@ -14,7 +27,7 @@ fn write_epub(dir: &Path, name: &str, title: &str, authors: &[&str], tags: &[&st
         blocks: vec![Block::Paragraph("Hello".into())],
     };
     let cover = Cover {
-        data: b"\xff\xd8fakejpeg".to_vec(),
+        data: jpeg(),
         media_type: "image/jpeg".into(),
     };
     nalanda_formats::epub::write_epub(&path, &metadata, &[chapter], Some(&cover)).unwrap();
@@ -57,7 +70,7 @@ fn add_list_search_update_remove() {
     );
     assert_eq!(
         std::fs::read(lib.cover_path(a.id).unwrap().unwrap()).unwrap(),
-        b"\xff\xd8fakejpeg"
+        jpeg()
     );
 
     // Author sort uses "Last, First": "Austen" < "Tolkien" although "J.R.R." < "Jane".
@@ -155,8 +168,6 @@ fn sanitize_produces_safe_components() {
     assert_eq!(sanitize("AC/DC: Live?"), "AC_DC_ Live_");
     assert_eq!(sanitize("  ..hidden. "), "_..hidden");
     assert_eq!(sanitize(""), "_");
-    assert_eq!(sort_title("The Hobbit"), "Hobbit, The");
-    assert_eq!(sort_title("Theory"), "Theory");
 }
 
 /// A calibre library holding the rows calibre 6.13's `calibredb` wrote for four
@@ -463,4 +474,132 @@ fn title_sort_matches_calibre() {
     assert_eq!(title_sort("Theory"), "Theory");
     assert_eq!(title_sort("Anathem"), "Anathem");
     assert_eq!(title_sort("The"), "The");
+}
+
+#[test]
+fn converts_a_nalanda_0_0_1_library() {
+    let root = tempfile::tempdir().unwrap();
+    // The catalog as a Nalanda 0.0.1 that quit without closing it leaves it:
+    // in WAL mode, with -wal and -shm files next to it.
+    let running = tempfile::tempdir().unwrap();
+    let old_db = Connection::open(running.path().join("nalanda.db")).unwrap();
+    old_db
+        .execute_batch("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;")
+        .unwrap();
+    old_db
+        .execute_batch(include_str!("tests_nalanda_0_0_1_fixture.sql"))
+        .unwrap();
+    for file in ["nalanda.db", "nalanda.db-wal", "nalanda.db-shm"] {
+        std::fs::copy(running.path().join(file), root.path().join(file)).unwrap();
+    }
+    drop(old_db);
+    let solaris = root.path().join("Stanisław Lem/Solaris (1)");
+    let walden = root.path().join("Unknown/Walden (2)");
+    std::fs::create_dir_all(&solaris).unwrap();
+    std::fs::create_dir_all(&walden).unwrap();
+    std::fs::write(solaris.join("Solaris - Stanisław Lem.epub"), "epub").unwrap();
+    std::fs::write(solaris.join("Solaris - Stanisław Lem.kepub.epub"), "kepub").unwrap();
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(3, 4, image::Rgb([50, 80, 170]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    std::fs::write(solaris.join("cover.png"), png).unwrap();
+    std::fs::write(walden.join("Walden - Unknown.txt"), "woods").unwrap();
+
+    let backups = tempfile::tempdir().unwrap();
+    let lib =
+        Library::open_with_backup_dir(root.path().into(), Some(backups.path().into())).unwrap();
+    // Only calibre's catalog stays in the library; the old one moves to the backups.
+    let mut top: Vec<_> = std::fs::read_dir(root.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    top.sort();
+    assert_eq!(top, ["Stanisław Lem", "Unknown", "metadata.db"]);
+    let library_id: String = Connection::open(root.path().join("metadata.db"))
+        .unwrap()
+        .query_row("SELECT uuid FROM library_id", [], |r| r.get(0))
+        .unwrap();
+    let old: i64 = Connection::open(
+        backups
+            .path()
+            .join(format!("{library_id}.nalanda-0.0.1.db")),
+    )
+    .unwrap()
+    .query_row("SELECT count(*) FROM books", [], |r| r.get(0))
+    .unwrap();
+    assert_eq!(old, 2);
+
+    // Same ids, folders, metadata and dates; files renamed to calibre's conventions.
+    let book = lib.get(1).unwrap();
+    assert_eq!(book.metadata.authors, ["Stanisław Lem"]);
+    assert_eq!(book.metadata.language.as_deref(), Some("pol"));
+    assert_eq!(
+        book.added_at.to_rfc3339(),
+        "2026-10-16T08:46:35.589422+00:00"
+    );
+    assert_eq!(
+        book.formats.iter().map(|f| f.format).collect::<Vec<_>>(),
+        [BookFormat::Epub, BookFormat::Kepub]
+    );
+    let kepub = lib.format_path(1, BookFormat::Kepub).unwrap();
+    assert_eq!(kepub, solaris.join("Solaris - Stanisław Lem.kepub"));
+    assert_eq!(std::fs::read_to_string(kepub).unwrap(), "kepub");
+    assert_eq!(
+        std::fs::read_to_string(lib.format_path(1, BookFormat::Epub).unwrap()).unwrap(),
+        "epub"
+    );
+    let cover = lib.cover_path(1).unwrap().unwrap();
+    assert_eq!(cover, solaris.join("cover.jpg"));
+    assert!(
+        std::fs::read(cover)
+            .unwrap()
+            .starts_with(&[0xff, 0xd8, 0xff])
+    );
+    assert!(!solaris.join("cover.png").exists());
+
+    let walden_book = lib.get(2).unwrap();
+    let mut identifiers = std::collections::BTreeMap::new();
+    identifiers.insert("isbn".to_owned(), "9780486284958".to_owned());
+    assert_eq!(
+        walden_book.metadata,
+        Metadata {
+            title: "Walden".into(),
+            authors: vec!["Henry David Thoreau".into()],
+            series: Some("Essays".into()),
+            series_index: Some(1.0),
+            publisher: Some("Ticknor".into()),
+            language: Some("eng".into()),
+            published: Some("1854-08-09".into()),
+            description: Some("Life in the woods.".into()),
+            tags: vec!["Nature".into(), "Philosophy".into()],
+            identifiers,
+        }
+    );
+    assert!(!walden_book.has_cover);
+    assert_eq!(
+        std::fs::read_to_string(lib.format_path(2, BookFormat::Txt).unwrap()).unwrap(),
+        "woods"
+    );
+
+    // New books continue after the converted ids.
+    let src = tempfile::tempdir().unwrap();
+    let emma = write_epub(src.path(), "e.epub", "Emma", &["Jane Austen"], &[]);
+    assert_eq!(lib.add_book(&emma).unwrap().id, 3);
+}
+
+#[test]
+fn new_libraries_are_calibre_libraries() {
+    let root = tempfile::tempdir().unwrap();
+    let lib = Library::open(root.path().join("New Library")).unwrap();
+    assert!(lib.list(None, SortBy::Title).unwrap().is_empty());
+    let db = Connection::open(root.path().join("New Library/metadata.db")).unwrap();
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 25);
+    let library_id: String = db
+        .query_row("SELECT uuid FROM library_id", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(library_id.len(), 36);
 }
