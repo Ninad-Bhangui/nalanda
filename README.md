@@ -8,6 +8,8 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
 
 - **Library**: import EPUB/KEPUB/PDF/MOBI/AZW3/FB2/TXT/HTML/DOCX/CBZ files, then search and sort them
   (recent, title, author). Files are stored in calibre's on-disk layout, `Author/Title (id)/`.
+  The library folder defaults to `~/Nalanda Library`. Use "Change library…" in the sidebar to open
+  another Nalanda library or start a new one in an empty folder.
 - **Metadata & covers**: EPUB 2/3 metadata (title, authors, series, tags, ISBN, …) and embedded
   covers, plus PDF document info. Metadata can be edited in the app.
 - **Reader**: a native reflowable reader for EPUB/TXT/HTML with a table of contents (it also splits
@@ -18,10 +20,10 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
   books (converting to EPUB when needed) and delete sideloaded books, which also removes them from
   the device database.
 - **Themes**: light, dark, or follow the OS (on Linux through the XDG desktop portal's color-scheme
-  setting). The reader page has its own Light/Sepia/Dark colors. Preferences are saved to
-  `~/.config/nalanda/settings.json` (or the platform's config directory).
+  setting). The reader page has its own Light/Sepia/Dark colors. Preferences, including the
+  library folder, are saved to `~/.config/nalanda/settings.json` (or the platform's config directory).
 - **Content server**: a JSON API and an OPDS feed, either embedded in the desktop app
-  ("Start server") or headless via `nalanda-server`.
+  ("Start server", which can be stopped again) or headless via `nalanda-server`.
 
 ## Architecture
 
@@ -123,7 +125,7 @@ file beside them and run `sha256sum --check --ignore-missing SHA256SUMS`.
 ```sh
 cargo test                       # every crate except the desktop app
 cargo run -p nalanda-server -- --library ~/Nalanda\ Library
-cargo run -p nalanda-desktop       # NALANDA_LIBRARY overrides ~/Nalanda Library
+cargo run -p nalanda-desktop       # NALANDA_LIBRARY overrides the chosen library folder
 ```
 
 On Debian/Ubuntu, the GPUI app needs:

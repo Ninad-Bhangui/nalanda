@@ -71,6 +71,9 @@ pub enum SortBy {
     Author,
 }
 
+/// Catalog file inside a library folder.
+const DB_FILE: &str = "nalanda.db";
+
 pub struct Library {
     root: PathBuf,
     conn: Mutex<Connection>,
@@ -81,13 +84,18 @@ impl Library {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         std::fs::create_dir_all(&root)?;
-        let conn = Connection::open(root.join("nalanda.db"))?;
+        let conn = Connection::open(root.join(DB_FILE))?;
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
             root,
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Whether `root` already holds a Nalanda library.
+    pub fn exists_at(root: &Path) -> bool {
+        root.join(DB_FILE).is_file()
     }
 
     pub fn root(&self) -> &Path {

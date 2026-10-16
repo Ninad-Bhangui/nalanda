@@ -17,11 +17,33 @@ pub fn bind_addr() -> SocketAddr {
         .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 8083)))
 }
 
+/// A running embedded server. Dropping it also stops the server.
+pub struct Server {
+    addr: SocketAddr,
+    stop: tokio::sync::oneshot::Sender<()>,
+    stopped: std::sync::mpsc::Receiver<()>,
+}
+
+impl Server {
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Stops accepting connections and returns once the port is free again.
+    /// Transfers still in progress are cut off.
+    pub fn stop(self) {
+        let _ = self.stop.send(());
+        let _ = self.stopped.recv();
+    }
+}
+
 /// Starts the server on its own thread and Tokio runtime. Returns once the
 /// socket is bound, or with the bind error.
-pub fn start(library: Arc<Library>, converters: Arc<Converters>) -> anyhow::Result<SocketAddr> {
+pub fn start(library: Arc<Library>, converters: Arc<Converters>) -> anyhow::Result<Server> {
     let addr = bind_addr();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("nalanda-server".into())
         .spawn(move || {
@@ -50,10 +72,23 @@ pub fn start(library: Arc<Library>, converters: Arc<Converters>) -> anyhow::Resu
                     library,
                     converters,
                 });
-                if let Err(e) = nalanda_server::serve_listener(listener, app).await {
-                    tracing::error!("server stopped: {e}");
+                tokio::select! {
+                    result = nalanda_server::serve_listener(listener, app) => {
+                        if let Err(e) = result {
+                            tracing::error!("server stopped: {e}");
+                        }
+                    }
+                    _ = stop_rx => {}
                 }
             });
+            // The listener was dropped with the serve future, so the port is free.
+            let _ = stopped_tx.send(());
+            runtime.shutdown_background();
         })?;
-    ready_rx.recv()?
+    let addr = ready_rx.recv()??;
+    Ok(Server {
+        addr,
+        stop: stop_tx,
+        stopped: stopped_rx,
+    })
 }
