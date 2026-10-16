@@ -46,8 +46,9 @@ check() {
 
 package() {
     cd "$srcdir/nalanda"
-    install -Dm755 target/release/nalanda "$pkgdir/usr/bin/nalanda"
-    install -Dm755 target/release/nalanda-server "$pkgdir/usr/bin/nalanda-server"
+    local target="${CARGO_TARGET_DIR:-target}"
+    install -Dm755 "$target/release/nalanda" "$pkgdir/usr/bin/nalanda"
+    install -Dm755 "$target/release/nalanda-server" "$pkgdir/usr/bin/nalanda-server"
     install -Dm644 packaging/nalanda.desktop "$pkgdir/usr/share/applications/nalanda.desktop"
     install -Dm644 README.md "$pkgdir/usr/share/doc/nalanda/README.md"
 }
