@@ -19,6 +19,8 @@ Desktop builds need the GPUI system packages listed in the README (`libwayland-d
 
 ## Releases
 
+When work is finished, don't ask whether to commit, push or release. Commit, push to `main`, bump the patch version and push a `v<version>` tag.
+
 The `Release` workflow fails unless the pushed tag equals `v` + `workspace.package.version` in `Cargo.toml`. When bumping the version, run `cargo update --workspace` so `Cargo.lock` updates itself. Do not hand-edit `Cargo.lock`. If a tag points at the wrong commit, move the tag to the commit that has the right version.
 
 ## Git
