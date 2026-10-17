@@ -38,6 +38,10 @@ const CARD_WIDTH: Pixels = px(152.);
 const GRID_GAP: Pixels = px(16.);
 const GRID_PADDING: Pixels = px(16.);
 
+/// Sort order of a freshly opened window, so the first listing can be read
+/// before the window exists.
+pub const INITIAL_SORT: SortBy = SortBy::RecentlyAdded;
+
 enum View {
     Library,
     Device(PathBuf),
@@ -88,8 +92,11 @@ pub struct NalandaApp {
 }
 
 impl NalandaApp {
+    /// `books` is the library listed with [`INITIAL_SORT`] and no search, if
+    /// already read; otherwise it is read here.
     pub fn new(
         library: Arc<Library>,
+        books: Option<Vec<Book>>,
         converters: Arc<Converters>,
         settings: Settings,
         imports: Vec<PathBuf>,
@@ -116,7 +123,7 @@ impl NalandaApp {
             converters,
             books: Vec::new(),
             covers: RefCell::default(),
-            sort: SortBy::RecentlyAdded,
+            sort: INITIAL_SORT,
             selected: None,
             search,
             view: View::Library,
@@ -134,7 +141,10 @@ impl NalandaApp {
             _subscriptions: vec![subscription, appearance],
         };
         app.apply_appearance(window, cx);
-        app.reload(cx);
+        match books {
+            Some(books) => app.books = books,
+            None => app.reload(cx),
+        }
         app.watch_devices(cx);
         if !imports.is_empty() {
             app.import(imports, cx);

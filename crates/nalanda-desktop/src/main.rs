@@ -47,12 +47,22 @@ fn main() -> anyhow::Result<()> {
         }
         (None, None) => default_dir()?,
     };
-    let library = Arc::new(nalanda_library::Library::open(&library_dir)?);
+    // Open the catalog and read the first listing while the platform and GPU
+    // start up. On a cold disk this is the slowest part of startup.
+    let loading = std::thread::Builder::new()
+        .name("library-open".into())
+        .spawn(move || {
+            let library = nalanda_library::Library::open(&library_dir)?;
+            // A failed listing is reported in the window, as on any reload.
+            let books = library.list(None, app::INITIAL_SORT).ok();
+            anyhow::Ok((Arc::new(library), books))
+        })?;
     let converters = Arc::new(nalanda_convert::Converters::default());
     let imports: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        prewarm_text(cx);
         cx.on_window_closed(|cx, _| cx.quit()).detach();
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
         let options = WindowOptions {
@@ -64,12 +74,49 @@ fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
+            let (library, books) = match loading.join().expect("library thread panicked") {
+                Ok(loaded) => loaded,
+                Err(e) => {
+                    eprintln!("Error: {e:?}");
+                    std::process::exit(1);
+                }
+            };
             cx.new(|cx| {
-                app::NalandaApp::new(library, converters, settings, imports, warning, window, cx)
+                app::NalandaApp::new(
+                    library, books, converters, settings, imports, warning, window, cx,
+                )
             })
         })
         .expect("failed to open window");
         cx.activate(true);
     });
     Ok(())
+}
+
+/// Loads the UI font on a background thread while the window opens.
+///
+/// The first time cosmic-text matches a set of font attributes it opens every
+/// installed font, about 30 ms each. The first layout needs two such matches:
+/// the UI font, and the default sans-serif that an empty line (like the empty
+/// search box) is shaped with. Shaping a sample line does both here.
+fn prewarm_text(cx: &App) {
+    use gpui_kit::component::ActiveTheme as _;
+    let font = font(cx.theme().font_family.clone());
+    let text_system = cx.text_system().clone();
+    cx.background_executor()
+        .spawn(async move {
+            let text_system = WindowTextSystem::new(text_system);
+            for text in ["", "Nalanda"] {
+                let run = TextRun {
+                    len: text.len(),
+                    font: font.clone(),
+                    color: black(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                text_system.layout_line(text, px(14.), &[run], None);
+            }
+        })
+        .detach();
 }
