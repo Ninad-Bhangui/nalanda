@@ -93,8 +93,11 @@ libraries that are too old. On those systems, build from source instead.
 For a prebuilt release, download the `.pkg.tar.zst` asset and install it:
 
 ```sh
-sudo pacman -U ./nalanda-git-*.pkg.tar.zst
+sudo pacman -U ./nalanda-bin-*.pkg.tar.zst
 ```
+
+This `nalanda-bin` package contains the same binaries as the `.deb`, built once
+on Ubuntu 24.04 and repackaged for Arch.
 
 Or build the latest development version using the included `PKGBUILD`:
 
@@ -163,8 +166,10 @@ GitHub Actions runs **CI** on branch pushes and pull requests. It tests every
 crate (including desktop), builds Debian and Arch packages, validates the desktop
 launcher, and smoke-tests package installation and shared-library availability.
 Packages can be downloaded from the workflow run's artifacts before a release.
-Arch builds run in an up-to-date Arch container against the exact commit being
-tested, including unmerged pull requests.
+CI compiles and tests once on Ubuntu 24.04, packages those binaries as a `.deb`
+and as an Arch `nalanda-bin` package, then installs and smoke-tests each package
+in its own distro. A separate weekly workflow builds the source `PKGBUILD` in an
+Arch container to check that it still works.
 
 The **Release** workflow is the CD path. For a release, update
 `workspace.package.version` in `Cargo.toml` and the workspace versions in

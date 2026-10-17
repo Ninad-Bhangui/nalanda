@@ -1,0 +1,26 @@
+# Repackages the binaries CI built on Ubuntu; nothing is compiled here.
+# CI sets pkgver and copies nalanda, nalanda-server, nalanda.desktop and
+# README.md next to this file before running `makepkg -p PKGBUILD-bin`.
+pkgname=nalanda-bin
+pkgver=0.0.0
+pkgrel=1
+pkgdesc='A calibre-style ebook manager and reader built with GPUI'
+arch=('x86_64')
+url='https://github.com/ninad-bhangui/nalanda'
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'fontconfig' 'freetype2' 'libx11' 'libxcb'
+         'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'vulkan-icd-loader')
+optdepends=('calibre: additional ebook conversion formats'
+            'xdg-desktop-portal: system theme and desktop integration')
+provides=('nalanda')
+conflicts=('nalanda')
+options=('!debug')
+source=('nalanda' 'nalanda-server' 'nalanda.desktop' 'README.md')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP') # Local files produced by the same CI run.
+
+package() {
+    install -Dm755 nalanda "$pkgdir/usr/bin/nalanda"
+    install -Dm755 nalanda-server "$pkgdir/usr/bin/nalanda-server"
+    install -Dm644 nalanda.desktop "$pkgdir/usr/share/applications/nalanda.desktop"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/nalanda/README.md"
+}

@@ -11,12 +11,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_PROFILE_DEV_DEBUG: 0
-  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
-  debian:
-    name: Test and package Debian / Ubuntu (x86_64)
+  # The only job that compiles. Built on the oldest supported distro so the
+  # binaries' glibc requirement is satisfied by every newer one, Arch included.
+  build:
+    name: Build, test and package Debian / Ubuntu (x86_64)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,10 +30,12 @@ jobs:
             libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 desktop-file-utils
       - name: Validate desktop launcher
         run: desktop-file-validate packaging/nalanda.desktop
-      - name: Test all crates, including desktop
-        run: cargo test --workspace --locked
       - name: Build release binaries
         run: cargo build --release --locked -p nalanda-desktop -p nalanda-server
+      # Release mode reuses the dependencies built above instead of compiling
+      # the whole graph a second time without optimizations.
+      - name: Test all crates, including desktop
+        run: cargo test --workspace --release --locked
       - name: Package desktop and server
         run: |
           cargo install cargo-deb --version 3.6.2 --locked
@@ -41,6 +43,8 @@ jobs:
           cargo deb -p nalanda-desktop --no-build --output dist/
           tar -czf dist/nalanda-server-linux-x86_64.tar.gz LICENSE README.md \
             -C target/release nalanda-server
+          # A tarball keeps the executable bits that upload-artifact drops.
+          tar -cf binaries.tar -C target/release nalanda nalanda-server
       - name: Smoke-test Debian installation
         run: |
           sudo apt-get install -y ./dist/*.deb
@@ -55,50 +59,37 @@ jobs:
           name: linux-debian
           path: dist/*
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: binaries.tar
+          if-no-files-found: error
 
   arch:
-    name: Test and package Arch Linux (x86_64)
+    name: Package and smoke-test Arch Linux (x86_64)
+    needs: build
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
-    env:
-      # Kept outside makepkg's srcdir so actions/cache can carry them between runs.
-      CARGO_HOME: /var/cache/nalanda/cargo
-      CARGO_TARGET_DIR: /var/cache/nalanda/target
     steps:
-      - name: Install build dependencies
+      - name: Install runtime dependencies
         run: |
-          pacman -Syu --noconfirm --needed git rust clang cmake pkgconf openssl zstd \
-            fontconfig freetype2 libx11 libxcb libxkbcommon libxkbcommon-x11 \
-            wayland vulkan-icd-loader desktop-file-utils sudo
+          pacman -Syu --noconfirm --needed fontconfig freetype2 libx11 libxcb libxkbcommon \
+            libxkbcommon-x11 wayland vulkan-icd-loader desktop-file-utils sudo
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-      - name: Read Rust version
-        id: rust
-        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        with:
-          path: |
-            /var/cache/nalanda/cargo/registry
-            /var/cache/nalanda/cargo/git
-            /var/cache/nalanda/target
-          key: arch-cargo-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: arch-cargo-${{ steps.rust.outputs.version }}-
-      - name: Build package from this exact checkout
+          name: binaries
+      - name: Package the Ubuntu-built binaries
         shell: bash
         run: |
           useradd -m builder
-          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git clone --no-hardlinks "$GITHUB_WORKSPACE" /home/builder/nalanda
           mkdir /home/builder/package
-          cp packaging/arch/PKGBUILD /home/builder/package/
-          # Test unmerged changes too, rather than cloning the public default branch.
-          sed -i 's|git+https://github.com/ninad-bhangui/nalanda.git|git+file:///home/builder/nalanda|' /home/builder/package/PKGBUILD
-          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
-          chown -R builder:builder /home/builder /var/cache/nalanda
-          sudo --preserve-env=CARGO_HOME,CARGO_TARGET_DIR,CARGO_PROFILE_DEV_DEBUG,CARGO_PROFILE_TEST_DEBUG,CARGO_TERM_COLOR \
-            -u builder bash -c 'cd /home/builder/package && makepkg --syncdeps --noconfirm'
+          tar -xf binaries.tar -C /home/builder/package
+          cp packaging/arch/PKGBUILD-bin packaging/nalanda.desktop README.md /home/builder/package/
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          sed -i "s/^pkgver=.*/pkgver=$version/" /home/builder/package/PKGBUILD-bin
+          chown -R builder:builder /home/builder
+          sudo -u builder bash -c 'cd /home/builder/package && makepkg -p PKGBUILD-bin --noconfirm'
       - name: Smoke-test Arch installation
         shell: bash
         run: |

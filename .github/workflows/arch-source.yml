@@ -1,0 +1,70 @@
+name: Arch source PKGBUILD
+
+# Compiling from source on Arch is slow and CI already ships Ubuntu-built
+# binaries, so this only checks weekly that packaging/arch/PKGBUILD still builds.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  makepkg:
+    name: Build nalanda-git from source (x86_64)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    env:
+      # Kept outside makepkg's srcdir so actions/cache can carry them between runs.
+      CARGO_HOME: /var/cache/nalanda/cargo
+      CARGO_TARGET_DIR: /var/cache/nalanda/target
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git rust clang cmake pkgconf openssl zstd \
+            fontconfig freetype2 libx11 libxcb libxkbcommon libxkbcommon-x11 \
+            wayland vulkan-icd-loader desktop-file-utils sudo
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read Rust version
+        id: rust
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/nalanda/cargo/registry
+            /var/cache/nalanda/cargo/git
+            /var/cache/nalanda/target
+          key: arch-cargo-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: arch-cargo-${{ steps.rust.outputs.version }}-
+      - name: Build package from this exact checkout
+        shell: bash
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone --no-hardlinks "$GITHUB_WORKSPACE" /home/builder/nalanda
+          mkdir /home/builder/package
+          cp packaging/arch/PKGBUILD /home/builder/package/
+          # Build the checked-out commit rather than cloning the public default branch.
+          sed -i 's|git+https://github.com/ninad-bhangui/nalanda.git|git+file:///home/builder/nalanda|' /home/builder/package/PKGBUILD
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
+          chown -R builder:builder /home/builder /var/cache/nalanda
+          sudo --preserve-env=CARGO_HOME,CARGO_TARGET_DIR,CARGO_PROFILE_DEV_DEBUG,CARGO_PROFILE_TEST_DEBUG,CARGO_TERM_COLOR \
+            -u builder bash -c 'cd /home/builder/package && makepkg --syncdeps --noconfirm'
+      - name: Smoke-test Arch installation
+        shell: bash
+        run: |
+          pacman -U --noconfirm /home/builder/package/*.pkg.tar.zst
+          command -v nalanda
+          nalanda-server --help
+          ldd /usr/bin/nalanda | tee /tmp/nalanda-ldd
+          if grep -q 'not found' /tmp/nalanda-ldd; then exit 1; fi
+          desktop-file-validate /usr/share/applications/nalanda.desktop
