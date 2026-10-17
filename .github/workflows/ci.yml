@@ -34,6 +34,10 @@ jobs:
         run: cargo build --release --locked -p nalanda-desktop -p nalanda-server
       # Release mode reuses the dependencies built above instead of compiling
       # the whole graph a second time without optimizations.
+      # Tradeoff, revisit later: release builds disable integer overflow checks
+      # and debug_assert!, so tests no longer exercise them. To get them back,
+      # set overflow-checks/debug-assertions in a [profile.release] section, or
+      # run a separate unoptimized `cargo test` (costs one extra full compile).
       - name: Test all crates, including desktop
         run: cargo test --workspace --release --locked
       - name: Package desktop and server

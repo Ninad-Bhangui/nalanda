@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-cargo test --workspace --locked                  # what CI runs (desktop included)
+cargo test --workspace --locked                  # all crates, desktop included (CI adds --release)
 cargo test -p nalanda-formats                    # one crate
 cargo test -p nalanda-library some_test_name     # one test by name
 cargo run -p nalanda-server -- --library ~/Nalanda\ Library
