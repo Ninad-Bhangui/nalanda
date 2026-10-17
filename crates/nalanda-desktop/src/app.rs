@@ -1,9 +1,11 @@
 //! Main window: library grid, book details, metadata editor, devices and reader.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -17,6 +19,7 @@ use nalanda_core::{Book, BookFormat, BookId, Metadata};
 use nalanda_device::{DeviceBook, KoboDevice, ReadStatus};
 use nalanda_library::{Library, SortBy};
 
+use crate::cover::CoverThumb;
 use crate::reader::{PageColors, Reader};
 use crate::settings::{Appearance, ReaderTheme, Settings};
 
@@ -28,6 +31,12 @@ const KOBO_FORMATS: [BookFormat; 5] = [
     BookFormat::Cbz,
     BookFormat::Txt,
 ];
+
+const SIDEBAR_WIDTH: Pixels = px(220.);
+const DETAILS_WIDTH: Pixels = px(340.);
+const CARD_WIDTH: Pixels = px(152.);
+const GRID_GAP: Pixels = px(16.);
+const GRID_PADDING: Pixels = px(16.);
 
 enum View {
     Library,
@@ -59,6 +68,9 @@ pub struct NalandaApp {
     library: Arc<Library>,
     converters: Arc<Converters>,
     books: Vec<Book>,
+    /// Cover file and its mtime per book, looked up on first render and
+    /// cleared on reload so the grid never queries the catalog per frame.
+    covers: RefCell<HashMap<BookId, Option<(PathBuf, SystemTime)>>>,
     sort: SortBy,
     selected: Option<BookId>,
     search: Entity<InputState>,
@@ -103,6 +115,7 @@ impl NalandaApp {
             library,
             converters,
             books: Vec::new(),
+            covers: RefCell::default(),
             sort: SortBy::RecentlyAdded,
             selected: None,
             search,
@@ -182,6 +195,7 @@ impl NalandaApp {
             Ok(books) => self.books = books,
             Err(e) => self.set_error(format!("Could not read library: {e}")),
         }
+        self.covers.borrow_mut().clear();
         if self
             .selected
             .is_some_and(|id| !self.books.iter().any(|b| b.id == id))
@@ -850,7 +864,7 @@ impl NalandaApp {
                 .child(label)
         };
         v_flex()
-            .w(px(220.))
+            .w(SIDEBAR_WIDTH)
             .h_full()
             .p_2()
             .gap_1()
@@ -906,9 +920,8 @@ impl NalandaApp {
             )
     }
 
-    fn render_grid(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_grid(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let on_device = self.on_device_keys();
         if self.books.is_empty() {
             let query_empty = self.search.read(cx).value().is_empty();
             return div()
@@ -924,81 +937,108 @@ impl NalandaApp {
                 })
                 .into_any_element();
         }
-        let mut grid = div().flex().flex_wrap().gap_4().p_4();
-        for book in &self.books {
-            let id = book.id;
-            let selected = self.selected == Some(id);
-            let synced = on_device.contains(&book_key(
-                &book.metadata.title,
-                &book.metadata.authors_display(),
-            ));
-            let cover = self.cover_element(book, px(140.), px(210.), cx);
-            grid = grid.child(
-                v_flex()
-                    .id(("book", id as u64))
-                    .w(px(152.))
-                    .p_1p5()
-                    .gap_1()
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .border_2()
-                    .border_color(if selected {
-                        theme.ring
-                    } else {
-                        transparent_black()
-                    })
-                    .hover(|d| d.bg(theme.secondary))
-                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                        if event.click_count() >= 2 {
-                            this.open_reader(id, cx);
-                        } else {
-                            if this.selected != Some(id) {
-                                this.editor = None;
-                            }
-                            this.selected = Some(id);
-                            cx.notify();
+        // Only the visible rows are built, so scrolling costs the same for
+        // ten books or ten thousand.
+        let width = window.viewport_size().width - SIDEBAR_WIDTH - DETAILS_WIDTH;
+        let columns = (((width - GRID_PADDING * 2. + GRID_GAP) / (CARD_WIDTH + GRID_GAP)) as usize)
+            .max(1);
+        let rows = self.books.len().div_ceil(columns);
+        uniform_list(
+            "grid-scroll",
+            rows,
+            cx.processor(move |this, range: Range<usize>, _, cx| {
+                let on_device = this.on_device_keys();
+                range
+                    .map(|row| {
+                        let start = row * columns;
+                        let end = (start + columns).min(this.books.len());
+                        let mut line = h_flex().gap(GRID_GAP).px(GRID_PADDING).pb(GRID_GAP);
+                        for ix in start..end {
+                            line = line.child(this.render_card(ix, &on_device, cx));
                         }
-                    }))
-                    .child(cover)
+                        line
+                    })
+                    .collect()
+            }),
+        )
+        .flex_1()
+        .h_full()
+        .pt(GRID_PADDING)
+        .into_any_element()
+    }
+
+    fn render_card(
+        &self,
+        ix: usize,
+        on_device: &HashSet<String>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let book = &self.books[ix];
+        let id = book.id;
+        let selected = self.selected == Some(id);
+        let synced = on_device.contains(&book_key(
+            &book.metadata.title,
+            &book.metadata.authors_display(),
+        ));
+        let cover = self.cover_element(book, px(140.), px(210.), cx);
+        v_flex()
+            .id(("book", id as u64))
+            .w(CARD_WIDTH)
+            .p_1p5()
+            .gap_1()
+            .rounded_lg()
+            .cursor_pointer()
+            .border_2()
+            .border_color(if selected {
+                theme.ring
+            } else {
+                transparent_black()
+            })
+            .hover(|d| d.bg(theme.secondary))
+            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                if event.click_count() >= 2 {
+                    this.open_reader(id, cx);
+                } else {
+                    if this.selected != Some(id) {
+                        this.editor = None;
+                    }
+                    this.selected = Some(id);
+                    cx.notify();
+                }
+            }))
+            .child(cover)
+            .child(
+                // Fixed at two lines so every row is the same height, which
+                // the virtualized list relies on.
+                div()
+                    .h(px(36.))
+                    .text_sm()
+                    .line_height(px(18.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .line_clamp(2)
+                    .child(book.metadata.title.clone()),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
                     .child(
                         div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .line_clamp(2)
-                            .child(book.metadata.title.clone()),
+                            .flex_1()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .truncate()
+                            .child(book.metadata.authors_display()),
                     )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .truncate()
-                                    .child(book.metadata.authors_display()),
-                            )
-                            .when(synced, |d| {
-                                d.child(div().text_xs().text_color(theme.success).child("● device"))
-                            }),
-                    ),
-            );
-        }
-        div()
-            .id("grid-scroll")
-            .flex_1()
-            .h_full()
-            .overflow_y_scroll()
-            .child(grid)
-            .into_any_element()
+                    .when(synced, |d| {
+                        d.child(div().text_xs().text_color(theme.success).child("● device"))
+                    }),
+            )
     }
 
     fn cover_element(&self, book: &Book, w: Pixels, h: Pixels, cx: &App) -> AnyElement {
         let theme = cx.theme();
-        let path = book
-            .has_cover
-            .then(|| self.library.cover_path(book.id).ok().flatten())
-            .flatten();
+        let cover = book.has_cover.then(|| self.cover_file(book.id)).flatten();
         let frame = div()
             .w(w)
             .h(h)
@@ -1007,10 +1047,21 @@ impl NalandaApp {
             .bg(theme.muted)
             .border_1()
             .border_color(theme.border);
-        match path {
-            Some(path) => frame
-                .child(img(path).size_full().object_fit(ObjectFit::Cover))
-                .into_any_element(),
+        match cover {
+            Some((path, modified)) => {
+                // Decode at twice the box size: sharp on HiDPI, but far smaller
+                // than a full-size cover to upload and draw.
+                let source = CoverThumb::source(path, modified, w, h);
+                frame
+                    .child(
+                        img(move |window: &mut Window, cx: &mut App| {
+                            window.use_asset::<CoverThumb>(&source, cx)
+                        })
+                        .size_full()
+                        .object_fit(ObjectFit::Cover),
+                    )
+                    .into_any_element()
+            }
             None => frame
                 .flex()
                 .flex_col()
@@ -1035,11 +1086,23 @@ impl NalandaApp {
         }
     }
 
+    fn cover_file(&self, id: BookId) -> Option<(PathBuf, SystemTime)> {
+        self.covers
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| {
+                let path = self.library.cover_path(id).ok().flatten()?;
+                let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+                Some((path, modified))
+            })
+            .clone()
+    }
+
     fn render_details(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let panel = v_flex()
             .id("details")
-            .w(px(340.))
+            .w(DETAILS_WIDTH)
             .h_full()
             .overflow_y_scroll()
             .p_4()
@@ -1617,7 +1680,7 @@ impl NalandaApp {
 }
 
 impl Render for NalandaApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let root = v_flex()
             .size_full()
@@ -1639,7 +1702,7 @@ impl Render for NalandaApp {
             _ => h_flex()
                 .flex_1()
                 .h_full()
-                .child(self.render_grid(cx))
+                .child(self.render_grid(window, cx))
                 .child(self.render_details(cx))
                 .into_any_element(),
         };

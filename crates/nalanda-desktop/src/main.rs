@@ -5,6 +5,7 @@
 //! `NALANDA_LIBRARY` overrides it.
 
 mod app;
+mod cover;
 mod reader;
 mod server;
 mod settings;
