@@ -9,6 +9,7 @@ default-members = [
     "crates/nalanda-device",
     "crates/nalanda-server",
 ]
+# nalanda-desktop (GPUI) and nalanda-rune (Rune) need GPU and windowing system packages.
 
 [workspace.package]
 version = "0.0.6"
@@ -38,3 +39,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3"
 gpui-kit = "0.7.3"
+# Pin a rev of Rune's `dev` branch; it is never rewritten.
+rune = { git = "https://github.com/anomalyco/rune", rev = "6bf8e9a0a4aa58d7e417e70641a7f0fe632dc5eb" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "6bf8e9a0a4aa58d7e417e70641a7f0fe632dc5eb" }
