@@ -1,7 +1,7 @@
 pkgname=nalanda-git
 pkgver=0.0.0.r0
 pkgrel=1
-pkgdesc='A calibre-style ebook manager and reader built with GPUI'
+pkgdesc='A calibre-style ebook manager and reader built with Rune'
 arch=('x86_64')
 url='https://github.com/ninad-bhangui/nalanda'
 license=('GPL-3.0-or-later')

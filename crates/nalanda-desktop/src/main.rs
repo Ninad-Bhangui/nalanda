@@ -1,23 +1,29 @@
-//! Nalanda desktop: a calibre-style ebook manager built on GPUI.
+//! Nalanda desktop on Rune.
 //!
 //! Usage: `nalanda [FILES...]`. Files given on the command line are imported.
 //! The library folder is the one chosen in the app (default `~/Nalanda Library`);
-//! `NALANDA_LIBRARY` overrides it.
+//! `NALANDA_LIBRARY` overrides it. Rune's own flags (`--snap`, `--tree`, `--script`, …) render
+//! the window headlessly.
 
 mod app;
-mod cover;
+mod covers;
+mod jobs;
 mod reader;
+#[path = "../../nalanda-gpui/src/server.rs"]
 mod server;
+#[path = "../../nalanda-gpui/src/settings.rs"]
 mod settings;
+mod view;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use gpui_kit::*;
+use rune::AppSpec;
 use settings::Settings;
 
 fn main() -> anyhow::Result<()> {
+    rune::prewarm_gpu();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -47,8 +53,7 @@ fn main() -> anyhow::Result<()> {
         }
         (None, None) => default_dir()?,
     };
-    // Open the catalog and read the first listing while the platform and GPU
-    // start up. On a cold disk this is the slowest part of startup.
+    // Open the catalog and read the first listing while the platform and GPU start up.
     let loading = std::thread::Builder::new()
         .name("library-open".into())
         .spawn(move || {
@@ -58,22 +63,21 @@ fn main() -> anyhow::Result<()> {
             anyhow::Ok((Arc::new(library), books))
         })?;
     let converters = Arc::new(nalanda_convert::Converters::default());
-    let imports: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    // Rune takes its own flags (`--snap`, `--tree`, …); what's left are files to import.
+    let imports: Vec<PathBuf> = rune::tooling::extra_args()
+        .iter()
+        .map(PathBuf::from)
+        .collect();
 
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        prewarm_text(cx);
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
-        let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Nalanda".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        gpui_kit::open_window(options, cx, |window, cx| {
+    let spec = AppSpec {
+        min_size: Some((900.0, 560.0)),
+        setup: Some(app::App::setup),
+        poll: Some(app::App::poll),
+        scenes: app::SCENES,
+        ..AppSpec::new("Nalanda", (1280.0, 820.0), app::App::placeholder, view::view)
+    };
+    rune::App::new(spec)
+        .init(move || {
             let (library, books) = match loading.join().expect("library thread panicked") {
                 Ok(loaded) => loaded,
                 Err(e) => {
@@ -81,42 +85,8 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             };
-            cx.new(|cx| {
-                app::NalandaApp::new(
-                    library, books, converters, settings, imports, warning, window, cx,
-                )
-            })
+            app::App::new(library, books, converters, settings, imports, warning)
         })
-        .expect("failed to open window");
-        cx.activate(true);
-    });
+        .run();
     Ok(())
-}
-
-/// Loads the UI font on a background thread while the window opens.
-///
-/// The first time cosmic-text matches a set of font attributes it opens every
-/// installed font, about 30 ms each. The first layout needs two such matches:
-/// the UI font, and the default sans-serif that an empty line (like the empty
-/// search box) is shaped with. Shaping a sample line does both here.
-fn prewarm_text(cx: &App) {
-    use gpui_kit::component::ActiveTheme as _;
-    let font = font(cx.theme().font_family.clone());
-    let text_system = cx.text_system().clone();
-    cx.background_executor()
-        .spawn(async move {
-            let text_system = WindowTextSystem::new(text_system);
-            for text in ["", "Nalanda"] {
-                let run = TextRun {
-                    len: text.len(),
-                    font: font.clone(),
-                    color: black(),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                text_system.layout_line(text, px(14.), &[run], None);
-            }
-        })
-        .detach();
 }

@@ -1,12 +1,12 @@
 [package]
-name = "nalanda-rune"
-description = "Nalanda desktop app (Rune)"
+name = "nalanda-gpui"
+description = "Nalanda GPUI desktop app (benchmark comparison)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "nalanda-rune"
+name = "nalanda-gpui"
 path = "src/main.rs"
 
 [dependencies]
@@ -16,8 +16,7 @@ nalanda-library.workspace = true
 nalanda-convert.workspace = true
 nalanda-device.workspace = true
 nalanda-server.workspace = true
-rune = { workspace = true, features = ["native-file-dialog"] }
-rune-kit.workspace = true
+gpui-kit.workspace = true
 anyhow.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
@@ -26,6 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 dirs = "6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+smallvec = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -31,7 +31,7 @@ jobs:
       - name: Validate desktop launcher
         run: desktop-file-validate packaging/nalanda.desktop
       - name: Build release binaries
-        run: cargo build --release --locked -p nalanda-desktop -p nalanda-server
+        run: cargo build --release --locked -p nalanda-desktop -p nalanda-gpui -p nalanda-server
       # Release mode reuses the dependencies built above instead of compiling
       # the whole graph a second time without optimizations.
       # Tradeoff, revisit later: release builds disable integer overflow checks
@@ -48,7 +48,7 @@ jobs:
           tar -czf dist/nalanda-server-linux-x86_64.tar.gz LICENSE README.md \
             -C target/release nalanda-server
           # A tarball keeps the executable bits that upload-artifact drops.
-          tar -cf binaries.tar -C target/release nalanda nalanda-server
+          tar -cf binaries.tar -C target/release nalanda nalanda-gpui nalanda-server
       - name: Smoke-test Debian installation
         run: |
           sudo apt-get install -y ./dist/*.deb

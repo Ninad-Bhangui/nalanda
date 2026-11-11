@@ -2,6 +2,7 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = [
+    "crates/nalanda-desktop",
     "crates/nalanda-core",
     "crates/nalanda-formats",
     "crates/nalanda-library",
@@ -9,10 +10,10 @@ default-members = [
     "crates/nalanda-device",
     "crates/nalanda-server",
 ]
-# nalanda-desktop (GPUI) and nalanda-rune (Rune) need GPU and windowing system packages.
+# nalanda-desktop (Rune) and nalanda-gpui need GPU and windowing system packages.
 
 [workspace.package]
-version = "0.0.6"
+version = "0.0.7"
 edition = "2024"
 license = "GPL-3.0-or-later"
 

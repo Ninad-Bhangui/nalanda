@@ -4402,7 +4402,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-convert"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "nalanda-core",
  "nalanda-formats",
@@ -4413,7 +4413,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "chrono",
  "serde",
@@ -4421,74 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-desktop"
-version = "0.0.6"
-dependencies = [
- "anyhow",
- "dirs 6.0.0",
- "gpui-kit",
- "image",
- "nalanda-convert",
- "nalanda-core",
- "nalanda-device",
- "nalanda-formats",
- "nalanda-library",
- "nalanda-server",
- "serde",
- "serde_json",
- "smallvec",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "nalanda-device"
-version = "0.0.6"
-dependencies = [
- "nalanda-core",
- "rusqlite",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "nalanda-formats"
-version = "0.0.6"
-dependencies = [
- "chrono",
- "ego-tree",
- "lopdf",
- "nalanda-core",
- "roxmltree 0.20.0",
- "scraper",
- "tempfile",
- "thiserror 2.0.21",
- "zip",
-]
-
-[[package]]
-name = "nalanda-library"
-version = "0.0.6"
-dependencies = [
- "chrono",
- "deunicode",
- "dirs 6.0.0",
- "image",
- "isolang",
- "nalanda-core",
- "nalanda-formats",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "uuid",
-]
-
-[[package]]
-name = "nalanda-rune"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -4510,8 +4443,75 @@ dependencies = [
 ]
 
 [[package]]
+name = "nalanda-device"
+version = "0.0.7"
+dependencies = [
+ "nalanda-core",
+ "rusqlite",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nalanda-formats"
+version = "0.0.7"
+dependencies = [
+ "chrono",
+ "ego-tree",
+ "lopdf",
+ "nalanda-core",
+ "roxmltree 0.20.0",
+ "scraper",
+ "tempfile",
+ "thiserror 2.0.21",
+ "zip",
+]
+
+[[package]]
+name = "nalanda-gpui"
+version = "0.0.7"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "gpui-kit",
+ "image",
+ "nalanda-convert",
+ "nalanda-core",
+ "nalanda-device",
+ "nalanda-formats",
+ "nalanda-library",
+ "nalanda-server",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nalanda-library"
+version = "0.0.7"
+dependencies = [
+ "chrono",
+ "deunicode",
+ "dirs 6.0.0",
+ "image",
+ "isolang",
+ "nalanda-core",
+ "nalanda-formats",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "nalanda-server"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "axum",

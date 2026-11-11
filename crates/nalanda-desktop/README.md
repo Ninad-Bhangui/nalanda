@@ -1,14 +1,13 @@
-# nalanda-rune
+# nalanda-desktop
 
-The Nalanda desktop app ported from GPUI (`nalanda-desktop`) to
-[Rune](https://github.com/anomalyco/rune), pinned to a `dev` rev in the workspace `Cargo.toml`.
-It uses the same library, formats, convert, device and server crates, and shares
-`settings.rs` and `server.rs` with the GPUI app. It has the same screens: the library grid,
+The Nalanda desktop app uses [Rune](https://github.com/anomalyco/rune), pinned to a `dev` rev
+in the workspace `Cargo.toml`. It uses the same library, formats, convert, device and server
+crates, and shares `settings.rs` and `server.rs` with the GPUI comparison app. It has the same screens: the library grid,
 details, the metadata editor, devices, the reader, the content server and themes.
 
 ```sh
-cargo run --release -p nalanda-rune
-NALANDA_LIBRARY=lib target/release/nalanda-rune --snap out.png --scene selected   # headless
+cargo run --release -p nalanda-desktop
+NALANDA_LIBRARY=lib target/release/nalanda --snap out.png --scene selected   # headless
 ```
 
 Scenes for `--snap`/`--tree`: `selected`, `editing`, `reading`, `light`, `dark`.
@@ -25,10 +24,10 @@ Scenes for `--snap`/`--tree`: `selected`, `editing`, `reading`, `light`, `dark`.
   at 96 MB of decoded RGBA. The view never touches the disk.
 - **Headless runs** never write the user's settings file.
 
-## Benchmark against `nalanda-desktop`
+## Benchmark against `nalanda-gpui`
 
 Both apps ran from `--release` builds on a 2,000-book library made by
-`cargo run --release -p nalanda-rune --example make_library -- DIR 2000`. Every book has a
+`cargo run --release -p nalanda-desktop --example make_library -- DIR 2000`. Every book has a
 1200×1800 JPEG cover. Each app ran alone in a headless sway with one 2560×1640 output at
 scale 2, so the window was 1280×820 points.
 
@@ -38,7 +37,7 @@ for Rune, so both covered the same distance. Rune scrolls fewer points per
 notch. End-of-run screenshots confirmed both stopped on the same rows. Test machine:
 4-core x86_64, GTX 1070 Ti (Vulkan), Linux 6.12, Rust 1.99.
 
-| Median of 7 | GPUI (`nalanda`) | Rune (`nalanda-rune`) |
+| Median of 7 | GPUI (`nalanda-gpui`) | Rune (`nalanda`) |
 | --- | --- | --- |
 | Launch to first frame mapped | 277 ms | **193 ms** (−30%) |
 | RSS, 4 s after launch | **244 MB** | 254 MB |
@@ -62,8 +61,8 @@ Notes:
 Reproduce:
 
 ```sh
-WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WAYLAND_DISPLAY= sway -c crates/nalanda-rune/bench/sway.conf &
-source crates/nalanda-rune/bench/nested.sh
-NALANDA_LIBRARY=/path/to/lib2000 python3 crates/nalanda-rune/bench/bench.py 7 \
-  "gpui=150=exec target/release/nalanda" "rune=277=exec target/release/nalanda-rune"
+WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WAYLAND_DISPLAY= sway -c crates/nalanda-desktop/bench/sway.conf &
+source crates/nalanda-desktop/bench/nested.sh
+NALANDA_LIBRARY=/path/to/lib2000 python3 crates/nalanda-desktop/bench/bench.py 7 \
+  "gpui=150=exec target/release/nalanda-gpui" "rune=277=exec target/release/nalanda"
 ```

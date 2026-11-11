@@ -1,5 +1,5 @@
 //! Builds a synthetic library for benchmarking the desktop frontends:
-//! `cargo run --release -p nalanda-rune --example make_library -- DIR [COUNT]`.
+//! `cargo run --release -p nalanda-desktop --example make_library -- DIR [COUNT]`.
 //!
 //! Every book is a small EPUB with a 1200×1800 JPEG cover (the size real covers come in) and
 //! a few chapters of text, added through `Library::add_book` as an import would.

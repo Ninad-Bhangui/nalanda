@@ -1,8 +1,9 @@
 # Nalanda
 
 A calibre-style ebook manager written in Rust. The desktop app uses
-[GPUI](https://www.gpui.rs/) through [gpui-kit](https://gpui-kit.com). The
-library also runs as an HTTP/OPDS server, so mobile and web clients can share it.
+[Rune](https://github.com/anomalyco/rune) and rune-kit. The former GPUI frontend
+is retained as `nalanda-gpui` for benchmark comparison. The library also runs as
+an HTTP/OPDS server, so mobile and web clients can share it.
 
 ## Features
 
@@ -35,7 +36,7 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
 ```
                  ┌────────────────┐      ┌──────────────────┐
                  │ nalanda-desktop│      │ future mobile app│
-                 │     (GPUI)     │      │  / OPDS readers  │
+                 │     (Rune)     │      │  / OPDS readers  │
                  └──┬─────────┬───┘      └────────┬─────────┘
           in-process│         │embeds             │ HTTP + JSON / OPDS
                     │   ┌─────▼──────────┐        │
@@ -60,7 +61,8 @@ library also runs as an HTTP/OPDS server, so mobile and web clients can share it
 | `nalanda-convert` | Converter backends (built-in, calibre) and library-level conversion     |
 | `nalanda-device`  | Kobo detection, listing, sending and deleting                           |
 | `nalanda-server`  | REST + OPDS over a library (`nalanda-server --library DIR --bind ADDR`) |
-| `nalanda-desktop` | GPUI app (`nalanda`)                                                    |
+| `nalanda-desktop` | Rune app (`nalanda`)                                                    |
+| `nalanda-gpui`    | Former GPUI app (`nalanda-gpui`), for benchmark comparison               |
 
 Devices are deliberately not part of the server API. A Kobo is plugged into one
 machine, so the desktop process talks to it directly.
@@ -112,7 +114,7 @@ Run `makepkg` as your normal user, not root. It installs the required build
 dependencies, compiles and tests the app, and installs both `nalanda` and
 `nalanda-server`. Re-run `makepkg -sif` to rebuild and update to the latest commit.
 This is a `nalanda-git` development package, not an AUR submission; no AUR helper
-is required. Building can take a while because GPUI has a large dependency graph.
+is required. Building can take a while because the native UI frameworks have large dependency graphs.
 
 ### Headless server
 
@@ -131,12 +133,13 @@ file beside them and run `sha256sum --check --ignore-missing SHA256SUMS`.
 ## Building
 
 ```sh
-cargo test                       # every crate except the desktop app
+cargo test                       # default crates, including the Rune desktop app
 cargo run -p nalanda-server -- --library ~/Nalanda\ Library
-cargo run -p nalanda-desktop       # NALANDA_LIBRARY overrides the chosen library folder
+cargo run -p nalanda-desktop       # Rune; NALANDA_LIBRARY overrides the chosen folder
+cargo run -p nalanda-gpui          # GPUI comparison build
 ```
 
-On Debian/Ubuntu, the GPUI app needs:
+On Debian/Ubuntu, the Rune desktop app needs:
 
 ```sh
 sudo apt install build-essential clang cmake pkg-config libfontconfig-dev libfreetype-dev \
@@ -159,6 +162,15 @@ cargo deb -p nalanda-desktop --no-build
 
 The package is written to `target/debian/`. Its linked-library dependencies are
 detected automatically, with runtime-loaded graphics libraries declared explicitly.
+
+## Desktop frontend benchmark
+
+Rune is now the shipped desktop frontend. The GPUI version remains available as
+`nalanda-gpui` for comparison. On a 2,000-book test library with JPEG covers, Rune launched
+to first mapped frame in 193 ms vs GPUI's 277 ms median and used 5.65 s vs 6.18 s of CPU
+scrolling the same distance (7 paired runs). Rune used about 10 MB more RSS at startup and
+20 MB more after scrolling. See [`crates/nalanda-desktop/README.md`](crates/nalanda-desktop/README.md)
+for methodology and reproducible scripts.
 
 ## CI and releases
 
