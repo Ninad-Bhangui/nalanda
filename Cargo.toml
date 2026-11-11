@@ -13,7 +13,7 @@ default-members = [
 # nalanda-desktop (Rune) and nalanda-gpui need GPU and windowing system packages.
 
 [workspace.package]
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 license = "GPL-3.0-or-later"
 

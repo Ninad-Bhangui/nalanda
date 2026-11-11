@@ -4402,7 +4402,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-convert"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "nalanda-core",
  "nalanda-formats",
@@ -4413,7 +4413,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-core"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "chrono",
  "serde",
@@ -4421,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-desktop"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -4444,7 +4444,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-device"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "nalanda-core",
  "rusqlite",
@@ -4454,7 +4454,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-formats"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "chrono",
  "ego-tree",
@@ -4469,7 +4469,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-gpui"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -4492,7 +4492,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-library"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "chrono",
  "deunicode",
@@ -4511,7 +4511,7 @@ dependencies = [
 
 [[package]]
 name = "nalanda-server"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "axum",

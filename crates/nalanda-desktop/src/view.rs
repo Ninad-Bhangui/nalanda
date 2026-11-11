@@ -6,9 +6,13 @@ use std::path::PathBuf;
 use nalanda_core::{Book, BookFormat};
 use nalanda_device::ReadStatus;
 use nalanda_library::SortBy;
-use rune::{Color, Cursor, Cx, El, ScrollSpec, SurfaceFit, TextStyle, Tx, col, el, row, text};
+use rune::{
+    Color, Cursor, Cx, El, ScrollSpec, Spring, SurfaceFit, TextStyle, Transition, Tx, col,
+    color::hex, el, row, text,
+};
 use rune_kit::{
-    Button, ButtonVariant, ControlSize, Dialog, Kit, SegmentedControl, TextArea, TextInput,
+    Button, ButtonVariant, ControlSize, Dialog, Kit, PaletteFocus, PaletteSeed, SegmentedControl,
+    TextArea, TextInput,
 };
 
 use crate::app::{App, Confirm, View, book_key, human_size};
@@ -24,9 +28,27 @@ const GRID_GAP: f32 = 16.0;
 const GRID_PADDING: f32 = 16.0;
 /// Cover, title (two 18 pt lines), author line, gaps and the row's bottom gap.
 const GRID_ROW_HEIGHT: f32 = COVER.1 + 2.0 * CARD_PADDING + 36.0 + 16.0 + 8.0 + GRID_GAP;
+const SELECT_MOTION: Spring = Spring::new(0.22, 0.0);
+
+fn library_kit(dark: bool) -> Kit {
+    // Paper and ink in light mode; a quiet blue-black reading room after dark.
+    let (bg, fg, accent) = if dark {
+        ("#1c1c1b", "#f1eee6", "#dca779")
+    } else {
+        ("#f9f6ef", "#302e2a", "#a75435")
+    };
+    Kit::from_palette_focus(
+        PaletteSeed {
+            bg: hex(bg).expect("theme color"),
+            fg: hex(fg).expect("theme color"),
+            accent: hex(accent).expect("theme color"),
+        },
+        PaletteFocus::Accent,
+    )
+}
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    let k = Kit::neutral(s.dark(cx.system_dark()));
+    let k = library_kit(s.dark(cx.system_dark()));
     let scale = cx.env().scale;
     let mut layer = Vec::new();
     let body = match &s.view {
@@ -208,16 +230,23 @@ fn sidebar_item(k: &Kit, key: String, title: String, sub: Option<String>, active
         .px(12.0)
         .py(8.0)
         .radius(6.0)
+        .border_sides(
+            [0.0, 0.0, 0.0, 3.0],
+            if active { k.c.text_accent } else { k.c.bg_deep },
+        )
         .cursor(Cursor::Pointer)
         .hover(k.c.hover)
+        .press(k.c.pressed)
+        .press_scale(0.98)
+        .motion(SELECT_MOTION)
         .child(
             text(title)
                 .font(k.ty.ui_medium)
-                .color(k.c.text_base)
+                .color(if active { k.c.text_accent } else { k.c.text_base })
                 .truncate(),
         );
     if active {
-        item = item.fill(k.c.layer_03);
+        item = item.fill(k.c.layer_02);
     }
     if let Some(sub) = sub {
         item = item.child(label(k, sub).truncate());
@@ -271,6 +300,15 @@ fn sidebar(s: &App, k: &Kit) -> El {
         .gap(4.0)
         .fill(k.c.bg_deep)
         .border_sides([0.0, 1.0, 0.0, 0.0], k.c.border_base)
+        .child(
+            col()
+                .px(12.0)
+                .pt(14.0)
+                .pb(20.0)
+                .gap(2.0)
+                .child(text("NALANDA").font(TextStyle::new(19.0, 700.0)).color(k.c.text_base))
+                .child(label(k, "A home for your books")),
+        )
         .child(section(k, "LIBRARY"))
         .child(
             sidebar_item(
@@ -325,14 +363,24 @@ fn grid(s: &App, k: &Kit, width: f32, scale: f32) -> El {
         .min_w(0.0)
         .min_h(0.0);
     if s.books.is_empty() {
-        let message = if s.search.text.is_empty() {
-            "Your library is empty. Click “Add books…” or drop ebook files here."
+        let (title, message) = if s.search.text.is_empty() {
+            (
+                "A shelf waiting for stories",
+                "Add books above, or drop ebook files into this window.",
+            )
         } else {
-            "No books match your search."
+            ("No books found", "Try another title, author, series, or tag.")
         };
         return viewport
             .center()
-            .child(text(message).font(k.ty.ui).color(k.c.text_muted));
+            .child(
+                col()
+                    .gap(8.0)
+                    .items_center()
+                    .child(text("✦").font(TextStyle::new(30.0, 400.0)).color(k.c.text_accent))
+                    .child(heading(k, title))
+                    .child(text(message).font(k.ty.ui).color(k.c.text_muted).wrap()),
+            );
     }
     // Only the rows near the viewport are built, so scrolling costs the same for ten books or
     // ten thousand.
@@ -340,31 +388,50 @@ fn grid(s: &App, k: &Kit, width: f32, scale: f32) -> El {
         (((width - GRID_PADDING * 2.0 + GRID_GAP) / (CARD_WIDTH + GRID_GAP)) as usize).max(1);
     let rows = s.books.len().div_ceil(columns);
     let k = k.clone();
-    viewport.scroll(ScrollSpec { stick_bottom: false }).child(
-        col()
-            .key("grid-rows")
-            .w_full()
-            .pt(GRID_PADDING)
-            .growth(rune::GrowthSpec::default())
-            .virtual_rows_version((s.books_version, columns, s.selected, k.dark))
-            .virtual_rows(
-                rows,
-                GRID_ROW_HEIGHT,
-                move |s: &App, r| {
-                    let id = s.books.get(r * columns).map_or(0, |b| b.id);
-                    format!("grid-{columns}-{id}").into()
-                },
-                move |s: &App, r| {
-                    let start = r * columns;
-                    let end = (start + columns).min(s.books.len());
-                    let mut line = row().gap(GRID_GAP).px(GRID_PADDING).pb(GRID_GAP);
-                    for book in &s.books[start..end] {
-                        line = line.child(card(s, book, &k, scale));
-                    }
-                    line
-                },
-            ),
-    )
+    viewport
+        .child(
+            row()
+                .w_full()
+                .px(GRID_PADDING + CARD_PADDING)
+                .pt(18.0)
+                .pb(12.0)
+                .center_y()
+                .child(heading(&k, "Your library"))
+                .child(el().grow(1.0))
+                .child(label(&k, format!("{} titles", s.books.len()))),
+        )
+        .child(
+            col()
+                .key("grid-scroll")
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .scroll(ScrollSpec { stick_bottom: false })
+                .child(
+                    col()
+                        .key("grid-rows")
+                        .w_full()
+                        .growth(rune::GrowthSpec::default())
+                        .virtual_rows_version((s.books_version, columns, s.selected, k.dark))
+                        .virtual_rows(
+                            rows,
+                            GRID_ROW_HEIGHT,
+                            move |s: &App, r| {
+                                let id = s.books.get(r * columns).map_or(0, |b| b.id);
+                                format!("grid-{columns}-{id}").into()
+                            },
+                            move |s: &App, r| {
+                                let start = r * columns;
+                                let end = (start + columns).min(s.books.len());
+                                let mut line = row().gap(GRID_GAP).px(GRID_PADDING).pb(GRID_GAP);
+                                for book in &s.books[start..end] {
+                                    line = line.child(card(s, book, &k, scale));
+                                }
+                                line
+                            },
+                        ),
+                ),
+        )
 }
 
 fn card(s: &App, book: &Book, k: &Kit, scale: f32) -> El {
@@ -390,6 +457,9 @@ fn card(s: &App, book: &Book, k: &Kit, scale: f32) -> El {
         .radius(8.0)
         .cursor(Cursor::Pointer)
         .hover(k.c.hover)
+        .press(k.c.pressed)
+        .press_scale(0.97)
+        .motion(SELECT_MOTION)
         .on_press(move |s: &mut App| s.select(id))
         .on_double_press(move |s: &mut App| s.open_reader(id))
         .child(cover(s, book, k, COVER, scale))
@@ -403,7 +473,7 @@ fn card(s: &App, book: &Book, k: &Kit, scale: f32) -> El {
         )
         .child(byline);
     if selected {
-        card.border(2.0, k.c.border_focus)
+        card.fill(k.c.layer_02).border(2.0, k.c.border_focus)
     } else {
         card
     }
@@ -543,9 +613,11 @@ fn details(s: &App, k: &Kit, scale: f32) -> El {
     }
     let title = m.title.clone();
     let mut content = col()
+        .key(format!("details-book-{id}"))
         .w_full()
         .padding(16.0)
         .gap(12.0)
+        .transition(Transition::offset(0.0, 8.0).combined(Transition::opacity()))
         .child(row().w_full().justify_center().child(cover(s, book, k, (200.0, 300.0), scale)))
         .child(
             col()
